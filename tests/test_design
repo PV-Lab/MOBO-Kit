@@ -1,0 +1,34 @@
+import numpy as np
+from src.design import (
+    make_linspace,
+    get_variable_space,
+    get_parameter_space,
+    generate_initial_design,
+)
+from src.utils import get_closest_array
+
+def test_make_linspace():
+    arr = make_linspace(0, 1, 0.2)
+    assert np.allclose(arr, [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]), "Incorrect linspace result"
+
+def test_variable_space_shape():
+    var_array = get_variable_space()
+    assert isinstance(var_array, list) and len(var_array) == 8
+    assert all(isinstance(v, np.ndarray) or isinstance(v, list) for v in var_array)
+
+def test_parameter_space_format():
+    space = get_parameter_space()
+    assert len(space.parameters) == 8
+    names = [p.name for p in space.parameters]
+    assert "temp" in names and "humidity" in names
+
+def test_design_sampling_and_snapping():
+    raw_samples = generate_initial_design(n_samples=5)
+    assert raw_samples.shape == (5, 8), "Design sample shape incorrect"
+
+    var_array = get_variable_space()
+    snapped = get_closest_array(raw_samples, var_array)
+
+    assert snapped.shape == (5, 8)
+    for i in range(8):
+        assert np.all(np.isin(snapped[:, i], var_array[i])), f"Column {i} has invalid snapped values"

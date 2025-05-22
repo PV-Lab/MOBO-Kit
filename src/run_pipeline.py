@@ -6,7 +6,8 @@
 import torch
 import pandas as pd
 import numpy as np
-from src.utils import x_normalizer, x_denormalizer, get_closest_array
+from src.design import generate_initial_design, get_variable_space
+from src.utils import get_closest_array, x_normalizer, x_denormalizer, get_closest_array
 from src.model import fit_gp_models
 
 # Optional: add paths if your raw data is in data/raw/ and outputs in data/processed/
@@ -18,6 +19,19 @@ def check_environment():
     if torch.cuda.is_available():
         print("Device Name:", torch.cuda.get_device_name(0))
         print("CUDA Version:", torch.version.cuda)
+
+def load_or_generate_data():
+    try:
+        df = pd.read_csv("data/raw/batch0_results.csv")
+        X = df.iloc[:, 0:8].values
+        y = df[['PCE', 'Stability', 'Repeatability']].values
+        return X, y
+    except FileNotFoundError:
+        print("No real data found. Generating initial design...")
+        design = generate_initial_design(n_samples=10)
+        var_array = get_variable_space()
+        snapped_design = get_closest_array(design, var_array)
+        return snapped_design, None
 
 def load_data():
     # Replace with your actual data structure
@@ -54,12 +68,22 @@ def postprocess_and_save(results):
     df_out.to_csv(OUTPUT_PATH, index=False)
     print(f"Saved to {OUTPUT_PATH}")
 
+#def main():
+#    check_environment()
+#    df = load_data()
+#    X = preprocess_data(df)
+#    results = run_model(X)
+#    postprocess_and_save(results)
+
 def main():
     check_environment()
-    df = load_data()
-    X = preprocess_data(df)
-    results = run_model(X)
-    postprocess_and_save(results)
+    X, y = load_or_generate_data()
+    X_norm = preprocess_data(X)
+    if y is not None:
+        Y_scaled, model = run_model(X_norm, y)
+        postprocess_and_save(Y_scaled)
+    else:
+        print("Initial design generated. Run experiments and save results to `data/raw/batch0_results.csv`.")
 
 if __name__ == '__main__':
     main()
