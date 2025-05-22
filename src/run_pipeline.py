@@ -9,6 +9,7 @@ import numpy as np
 from src.design import generate_initial_design, get_variable_space
 from src.utils import get_closest_array, x_normalizer, x_denormalizer, get_closest_array
 from src.model import fit_gp_models
+torch.set_default_dtype(torch.float64)
 
 # Optional: add paths if your raw data is in data/raw/ and outputs in data/processed/
 RAW_DATA_PATH = "data/raw/input.csv"
@@ -39,18 +40,24 @@ def load_data():
     print(f"Loaded data with shape: {df.shape}")
     return df
 
-def preprocess_data(df):
-    # Example placeholder: replace with your actual preprocessing logic
+#def preprocess_data(df):
+#    # Example placeholder: replace with your actual preprocessing logic
+#    print("Preprocessing data...")
+#    data = df.values
+#    normalized = x_normalizer(data, var_array=[data.T for _ in range(data.shape[1])])
+#    return np.array(normalized)
+
+def preprocess_data(data):
     print("Preprocessing data...")
-    data = df.values
-    normalized = x_normalizer(data, var_array=[data.T for _ in range(data.shape[1])])
+    var_array = [data[:, i] for i in range(data.shape[1])]
+    normalized = x_normalizer(data, var_array)
     return np.array(normalized)
 
 def run_model(X, y):
     print("Running GP model...")
 
-    X_tensor = torch.tensor(X, dtype=torch.float32)
-    y_tensor = torch.tensor(y, dtype=torch.float32)
+    X_tensor = torch.tensor(X, dtype=torch.float64)
+    y_tensor = torch.tensor(y, dtype=torch.float64)
 
     # Optionally scale outputs (replicates original notebook behavior)
     Y_max = y_tensor.max(dim=0).values
