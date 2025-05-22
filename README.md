@@ -1,10 +1,5 @@
-import os
-
-repo_path = "/MOBO-FOM"
-os.makedirs(repo_path, exist_ok=True)
-
-# README content
-readme_content = """
+# README: MOBO-FOM
+by Ethan Schwartz, Daniel Abdoue, Nicky Evans, and Tonio Buonassisi
 <h1>
 <p align="center">
     <img src="assets/mobo-fom-logo.jpg" alt="Slot-die optimization logo" width="600"/>
