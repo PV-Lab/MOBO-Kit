@@ -1,3 +1,11 @@
-matplotlib == 3.10.0
-pandas == 2.2.3
-black
+numpy
+pandas
+scipy
+matplotlib
+seaborn
+scikit-learn
+emukit
+# These depend on PyTorch; versions vary by OS, CUDA, and Python
+torch
+gpytorch
+botorch

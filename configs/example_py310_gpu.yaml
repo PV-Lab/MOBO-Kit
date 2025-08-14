@@ -1,0 +1,27 @@
+seed: 42
+device: "cuda"            # "cpu" if no GPU
+batch_size: 5             # propose 5 new candidates per iteration
+initial_points: 8         # your LHS size
+bounds:
+  names: ["speed", "temp", "angle", "pressure", "flow", "gap", "thickness", "anneal"]
+  lower: [.., .., .., .., .., .., .., ..]     # fill from your notebook
+  upper: [.., .., .., .., .., .., .., ..]
+objectives:
+  names: ["pce", "stability", "repeatability"]
+  sense: ["max", "max", "max"]       # or ["max","max","min"] if needed
+constraints:
+  clausius_clapeyron: true
+  absolute_humidity_col: "AH (g/m³)"
+  temperature_col: "Temp (C)"
+files:
+  input_table: "data/processed/round0_lhs.csv"   # optional; or we generate LHS
+  save_dir: "results/runs/run_{date}-{time}"
+model:
+  kernel: "matern_2.5"
+  ard: true
+  noise_prior: "lognormal(-4.0, 0.5)"           # your working prior
+acquisition:
+  type: "qehvi"
+  ref_point: [0.0, 0.0, 0.0]                    # set to conservative nadir
+  num_mc_samples: 128
+  candidates_per_batch: 5
