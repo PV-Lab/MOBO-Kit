@@ -1,0 +1,50 @@
+inputs:
+- name: speed_inorg
+  unit: m/min
+  start: 0.25
+  stop: 1.0
+  step: 0.01
+- name: speed_org
+  unit: m/min
+  start: 0.25
+  stop: 1.0
+  step: 0.01
+- name: inkfl_inorg
+  unit: uL/min
+  start: 80.0
+  stop: 240.0
+  step: 1.0
+- name: inkfl_org
+  unit: uL/min
+  start: 100.0
+  stop: 280.0
+  step: 1.0
+- name: conc_inorg
+  unit: M
+  start: 0.8
+  stop: 1.4
+  step: 0.05
+- name: conc_org
+  unit: M
+  start: 0.4
+  stop: 1.2
+  step: 0.05
+- name: temperature_c
+  unit: F
+  start: 20.0
+  stop: 50.0
+  step: 1.0
+- name: absolute_humidity
+  unit: g/m^3
+  start: 2.0
+  stop: 37.0
+  step: 1.0
+objectives:
+  names:
+  - PCE
+  - Stability
+  - Repeatability
+constraints:
+- clausius_clapeyron: true
+  ah_col: absolute_humidity
+  temp_c_col: temperature_c

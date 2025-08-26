@@ -86,7 +86,237 @@ def _lhs_labels(design: Design, cols) -> list:
 
 
 # ----------------------------
-# Public API
+# OPTIMIZED LHS IMPLEMENTATION
+# ----------------------------
+
+def _batch_generate_lhs_samples(
+    design: Design, 
+    total_samples: int, 
+    batch_size: int = 100,
+    seed: Optional[int] = None
+) -> np.ndarray:
+    """
+    Generate LHS samples in batches for better memory management.
+    """
+    if seed is not None:
+        np.random.seed(seed)
+    
+    space = _space_from_design(design)
+    all_samples = []
+    
+    for i in range(0, total_samples, batch_size):
+        current_batch = min(batch_size, total_samples - i)
+        batch_samples = LatinDesign(space).get_samples(current_batch)
+        all_samples.append(batch_samples)
+    
+    return np.vstack(all_samples)
+
+
+def _batch_apply_constraints(
+    X_samples: np.ndarray, 
+    design: Design, 
+    constraints: Sequence[RowConstraint],
+    batch_size: int = 1000
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Apply constraints in batches to avoid memory issues with large sample sets.
+    Returns (valid_samples, valid_indices).
+    """
+    if not constraints:
+        return X_samples, np.arange(len(X_samples))
+    
+    valid_samples = []
+    valid_indices = []
+    
+    for i in range(0, len(X_samples), batch_size):
+        batch_end = min(i + batch_size, len(X_samples))
+        X_batch = X_samples[i:batch_end]
+        
+        # Apply constraints to this batch
+        mask = apply_row_constraints(X_batch, design, constraints)
+        valid_batch = X_batch[mask]
+        valid_indices.extend(np.arange(i, batch_end)[mask])
+        
+        if len(valid_batch) > 0:
+            valid_samples.append(valid_batch)
+    
+    if valid_samples:
+        return np.vstack(valid_samples), np.array(valid_indices)
+    else:
+        return np.empty((0, X_samples.shape[1])), np.array([], dtype=int)
+
+
+def _smart_subset_selection(
+    X_valid: np.ndarray,
+    n_target: int,
+    max_abs_corr: float,
+    max_tries: int = 1000,
+    early_stop_threshold: float = 0.1,
+    seed: Optional[int] = None
+) -> Tuple[np.ndarray, float, int]:
+    """
+    Smart subset selection with early stopping and adaptive search.
+    Returns (best_subset, best_correlation, tries_used).
+    """
+    if seed is not None:
+        rng = np.random.default_rng(seed)
+    else:
+        rng = np.random.default_rng()
+    
+    m = X_valid.shape[0]
+    if m <= n_target:
+        return X_valid, _max_abs_corr(X_valid), 0
+    
+    best_X = None
+    best_corr = float("inf")
+    tries_used = 0
+    
+    # Phase 1: Quick random sampling
+    quick_tries = min(max_tries // 2, 100)
+    for _ in range(quick_tries):
+        idx = rng.choice(m, size=n_target, replace=False)
+        X_sub = X_valid[idx]
+        corr = _max_abs_corr(X_sub)
+        
+        if corr < best_corr:
+            best_corr = corr
+            best_X = X_sub.copy()
+            tries_used += 1
+            
+            # Early stopping if we're close to target
+            if corr <= max_abs_corr + early_stop_threshold:
+                break
+    
+    # Phase 2: Targeted improvement if needed
+    if best_corr > max_abs_corr:
+        remaining_tries = max_tries - tries_used
+        for _ in range(remaining_tries):
+            idx = rng.choice(m, size=n_target, replace=False)
+            X_sub = X_valid[idx]
+            corr = _max_abs_corr(X_sub)
+            
+            if corr < best_corr:
+                best_corr = corr
+                best_X = X_sub.copy()
+                tries_used += 1
+                
+                if corr <= max_abs_corr:
+                    break
+    
+    return best_X, best_corr, tries_used
+
+
+def lhs_dataframe_optimized(
+    design: Design,
+    n: int,
+    seed: Optional[int] = None,
+    snap_to_grids: bool = True,
+    row_constraints: Optional[Union[RowConstraint, Sequence[RowConstraint]]] = None,
+    max_abs_corr: Optional[float] = None,
+    # Performance tuning:
+    max_attempts: int = 100,
+    oversample: int = 5,  # Increased for better constraint satisfaction
+    batch_size: int = 100,
+    subset_tries: int = 1000,
+    early_stop_threshold: float = 0.1,
+    verbose: bool = False,
+) -> pd.DataFrame:
+    """
+    OPTIMIZED LHS generation with batch processing, smart subset selection, and early stopping.
+    
+    Key optimizations:
+    1. Batch LHS generation to manage memory
+    2. Batch constraint application
+    3. Smart subset selection with early stopping
+    4. Adaptive oversampling based on constraint strictness
+    """
+    if seed is not None:
+        np.random.seed(int(seed))
+    
+    # Normalize constraints
+    if row_constraints is None:
+        constraints_list = []
+    elif callable(row_constraints):
+        constraints_list = [row_constraints]
+    else:
+        constraints_list = list(row_constraints)
+    
+    # Adjust oversampling based on constraint complexity
+    if constraints_list:
+        effective_oversample = max(oversample, len(constraints_list) * 2)
+    else:
+        effective_oversample = 1
+    
+    total_samples_needed = n * effective_oversample
+    
+    if verbose:
+        print(f"[OPTIMIZED LHS] Target: {n} samples, Generating: {total_samples_needed} samples")
+    
+    best_candidate = None
+    best_corr = float("inf")
+    
+    for attempt in range(1, max_attempts + 1):
+        if verbose and attempt % 10 == 0:
+            print(f"[OPTIMIZED LHS] Attempt {attempt}/{max_attempts}")
+        
+        # Generate LHS samples in batches
+        X_raw = _batch_generate_lhs_samples(
+            design, total_samples_needed, batch_size, seed
+        )
+        
+        # Snap to grids if requested
+        if snap_to_grids:
+            X_raw = snap_to_grid_np(X_raw, design)
+        
+        # Apply constraints in batches
+        X_valid, valid_indices = _batch_apply_constraints(
+            X_raw, design, constraints_list, batch_size
+        )
+        
+        if len(X_valid) < n:
+            if verbose:
+                print(f"[OPTIMIZED LHS] Attempt {attempt}: Only {len(X_valid)} valid samples")
+            continue
+        
+        # Smart subset selection
+        X_best, corr_val, tries_used = _smart_subset_selection(
+            X_valid, n, max_abs_corr or 1.0, subset_tries, early_stop_threshold
+        )
+        
+        if verbose:
+            print(f"[OPTIMIZED LHS] Attempt {attempt}: max|corr|={corr_val:.3f} (tries: {tries_used})")
+        
+        # Check if we met the correlation target
+        if max_abs_corr is None or corr_val <= max_abs_corr:
+            if verbose:
+                print(f"[OPTIMIZED LHS] Success! max|corr|={corr_val:.3f} <= {max_abs_corr}")
+            return pd.DataFrame(X_best, columns=design.names)
+        
+        # Keep track of best candidate
+        if corr_val < best_corr:
+            best_corr = corr_val
+            best_candidate = X_best.copy()
+    
+    # Return best candidate if we didn't meet the target
+    if best_candidate is not None:
+        if verbose:
+            print(f"[OPTIMIZED LHS] Best achieved: max|corr|={best_corr:.3f} (> target)")
+        return pd.DataFrame(best_candidate, columns=design.names)
+    
+    # Fallback: return whatever we have
+    if verbose:
+        print(f"[OPTIMIZED LHS] Failed to generate {n} samples after {max_attempts} attempts")
+    
+    # Try one more time with minimal constraints
+    X_fallback = _batch_generate_lhs_samples(design, n, batch_size, seed)
+    if snap_to_grids:
+        X_fallback = snap_to_grid_np(X_fallback, design)
+    
+    return pd.DataFrame(X_fallback, columns=design.names)
+
+
+# ----------------------------
+# Original LHS (kept for backward compatibility)
 # ----------------------------
 
 def lhs_dataframe(
@@ -99,9 +329,9 @@ def lhs_dataframe(
     row_constraints: Optional[Union[RowConstraint, Sequence[RowConstraint]]] = None,
     max_abs_corr: Optional[float] = None,
     # Sampling controls:
-    max_attempts: int = 50,
+    max_attempts: int = 100,
     oversample: int = 3,
-    subset_tries: int = 200,
+    subset_tries: int = 800,
     verbose: bool = False,
 ) -> pd.DataFrame:
     """

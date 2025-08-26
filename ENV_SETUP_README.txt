@@ -1,4 +1,4 @@
-Environment setup for the uploaded notebooks (Python 3.13.5 target)
+Environment setup for the uploaded notebooks (Python 3.10.11 target)
 =================================================================
 
 Detected top-level libraries:
