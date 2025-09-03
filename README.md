@@ -168,6 +168,3 @@ constraints:
   - clausius_clapeyron: true
     ah_col: "absolute_humidity"
     temp_c_col: "temperature_c"
-
-files:
-  save_dir: "results/demo"
