@@ -86,7 +86,7 @@ print("CUDA available:", torch.cuda.is_available())
 print("Device count:", torch.cuda.device_count())
 ```
 
-### Option 2: Install with pip
+### Option 2: Install with pip (once software license received)
 
 ```bash
 pip install mobo-kit

@@ -53,7 +53,7 @@ dependencies = [
     "botorch>=0.8.0",
     "emukit>=0.4.10",
     "shap>=0.41.0",
-    "pyDOE>=0.3.8",
+    "pyDOE3>=0.3.8",
     "jupyter>=1.0.0",
     "ipykernel>=6.0.0",
 ]
