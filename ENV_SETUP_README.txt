@@ -1,42 +1,144 @@
-Environment setup for the uploaded notebooks (Python 3.10.11 target)
-=================================================================
+MOBO-Kit: Multi-objective Bayesian Optimization Toolkit
+======================================================
 
-Detected top-level libraries:
-- numpy, pandas, scipy, matplotlib, seaborn, scikit-learn, emukit
-- torch, gpytorch, botorch
+Environment setup for MOBO-Kit (Python 3.10+ target)
+====================================================
 
-Recommended approach
---------------------
-1) Create a fresh venv:
+MOBO-Kit is a complete package for multi-objective Bayesian optimization with:
+- Latin Hypercube Sampling for initial experiment design
+- Gaussian Process models with BoTorch
+- Multi-objective acquisition functions (qNEHVI)
+- Batch candidate proposal
+- Comprehensive plotting and analysis tools
+
+Quick Installation
+------------------
+1) Create a fresh virtual environment:
    python -m venv mobo-env
    # Windows: mobo-env\Scripts\activate
    # macOS/Linux: source mobo-env/bin/activate
 
-2) Upgrade pip and install core packages:
-   python -m pip install --upgrade pip setuptools wheel
-   pip install -r requirements-core.txt
+2) Install MOBO-Kit in development mode:
+   pip install -e .
 
-3) Install PyTorch stack (may depend on OS / CUDA / CPU):
-   # Start with the generic command; if it fails, follow PyTorch's selector for your platform.
-   pip install -r requirements-gpbo.txt
+This will automatically install all required dependencies including:
+- Core scientific computing: numpy, pandas, scipy, matplotlib, seaborn, scikit-learn
+- Machine learning: torch, gpytorch, botorch, emukit
+- Additional tools: shap, pyDOE, pyyaml
 
-4) Jupyter kernel:
-   pip install notebook ipykernel
-   python -m ipykernel install --user --name=mobo-env --display-name "Python (mobo-env)"
+GPU Support (CUDA)
+------------------
+By default, PyTorch is installed in CPU-only mode. For GPU acceleration:
 
-Notes on Python 3.13.5
-----------------------
-- Some scientific/ML libraries lag official wheels for brand-new Python versions.
-- If torch/gpytorch/botorch fail to install on 3.13 right now, create a *compat* env using Python 3.11 (known to be widely supported):
-    conda create -n mobo-py311 python=3.11
-    conda activate mobo-py311
-    python -m pip install --upgrade pip setuptools wheel
-    pip install -r requirements-core.txt
-    # Then install the PyTorch stack using the commands from the official PyTorch website for your OS/accelerator.
-- Emukit is pure-Python and typically works across Python versions; if pip reports incompatibility, pin to an earlier release, e.g.:
-    pip install "emukit<=0.4.10"
+1) Check your CUDA version:
+   nvidia-smi
 
-Next steps
+2) Install PyTorch with CUDA support:
+   # For CUDA 12.1 (recommended)
+   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+   
+   # For CUDA 11.8 (more compatible)
+   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+   
+   # For CUDA 12.8 (latest)
+   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+
+3) Verify GPU support:
+   python -c "import torch; print('CUDA available:', torch.cuda.is_available())"
+
+Alternative Installation Methods
+--------------------------------
+1) From source (development):
+   git clone <repository-url>
+   cd MOBO-FOM
+   pip install -e .
+
+2) For Google Colab:
+   See COLAB_INSTALL.md for specific instructions
+
+3) Using conda (if preferred):
+   conda create -n mobo-kit python=3.10
+   conda activate mobo-kit
+   pip install -e .
+
+Usage Examples
+--------------
+1) Generate initial experiments:
+   mobo-kit generate --config configs/demo_config.yaml --n-samples 20 --out initial_experiments.csv
+
+2) Run MOBO optimization:
+   mobo-kit run --csv data/processed/configCSV_example.csv --verbose
+
+3) Python API:
+   from mobo_kit.main import run_mobo_experiment, generate_initial_experiments
+   
+   # Generate initial experiments
+   results = generate_initial_experiments(
+       config_path="configs/demo_config.yaml",
+       n_samples=20,
+       save_path="initial_experiments.csv"
+   )
+   
+   # Run MOBO optimization
+   results = run_mobo_experiment(
+       csv_path="data/processed/configCSV_example.csv",
+       save_dir="results/experiment"
+   )
+
+Package Structure
+-----------------
+src/mobo_kit/
+├── main.py          # Main API functions
+├── cli.py           # Command-line interface
+├── design.py        # Design space construction
+├── data.py          # Data loading and preprocessing
+├── models.py        # Gaussian Process models
+├── acquisition.py   # Acquisition functions and batch proposal
+├── lhs.py           # Latin Hypercube Sampling
+├── plotting.py      # Visualization tools
+├── metrics.py       # Performance metrics
+├── constraints.py   # Constraint handling
+└── utils.py         # Utility functions
+
+Configuration Files
+-------------------
+- configs/demo_config.yaml: Example configuration
+- configs/auto_config.yaml: Auto-generated from CSV metadata
+- configs/configCSV_example_config.yaml: Example with CSV metadata
+
+Output Files
+------------
+When running MOBO experiments, the following files are generated:
+- predictions.csv: Model predictions for all data points
+- parity_plots.png: Visual parity plots showing model performance
+- model_metrics.csv: R² and RMSE metrics for each objective
+- next_batch.csv: Proposed new experiments to run
+
+Troubleshooting
+---------------
+1) If you encounter import errors, ensure all dependencies are installed:
+   pip install -r requirements.txt
+
+2) For CUDA/GPU support, install PyTorch with CUDA:
+   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+3) If you have Python 3.13+ compatibility issues, use Python 3.10 or 3.11:
+   conda create -n mobo-kit python=3.10
+   conda activate mobo-kit
+   pip install -e .
+
+4) For Jupyter notebook support:
+   pip install jupyter ipykernel
+   python -m ipykernel install --user --name=mobo-kit --display-name "Python (mobo-kit)"
+
+Next Steps
 ----------
-- Launch Jupyter and select the 'Python (mobo-env)' kernel.
-- Run the notebooks; if a ModuleNotFoundError appears, let me know and I will update the requirements.
+1) Try the demo: mobo-kit run --csv data/processed/configCSV_example.csv --verbose
+2) Generate your own initial experiments: mobo-kit generate --config configs/demo_config.yaml --n-samples 20 --out my_experiments.csv
+3) Explore the Jupyter notebooks in the notebooks/ directory
+4) Check the README.md for detailed usage instructions
+
+For more information, see:
+- README.md: Complete usage guide
+- COLAB_INSTALL.md: Google Colab setup
+- notebooks/MOBO_demo_annotated.ipynb: Interactive tutorial

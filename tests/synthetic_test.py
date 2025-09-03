@@ -5,8 +5,9 @@ Synthetic multi-objective test problem for debugging MOBO pipeline
 
 import numpy as np
 import torch
+from scipy.stats import qmc
 import matplotlib.pyplot as plt
-from gpytorch.kernels import RBFKernel, MaternKernel
+from gpytorch.kernels import RBFKernel, MaternKernel, PeriodicKernel
 from gpytorch.priors import LogNormalPrior
 
 from src.models import fit_gp_models, posterior_report, loocv_select_models
@@ -46,20 +47,45 @@ def synthetic_objectives(X):
     
     return np.column_stack([obj1, obj2])
 
-def generate_training_data(n_points=20, noise_std=0.05, seed=42):
-    """Generate training data with controlled noise"""
-    np.random.seed(seed)
-    
-    # Random sampling in [0,1]^2
-    X_train = np.random.uniform(0, 1, size=(n_points, 2))
-    
+def generate_training_data(
+    n_points: int = 20,
+    noise_std: float = 0.05,
+    seed: int = 42,
+    dim: int = 2,
+    bounds: np.ndarray | None = None,
+):
+    """
+    Generate training data using Latin Hypercube Sampling with controlled noise.
+
+    Args:
+        n_points: number of samples
+        noise_std: std dev of Gaussian noise added to objectives
+        seed: RNG seed for reproducibility
+        dim: dimensionality of X
+        bounds: optional (dim, 2) array of [low, high] for each dim; defaults to [0,1]^dim
+
+    Returns:
+        X_train: (n_points, dim) sampled inputs
+        Y_noisy: (n_points, M) noisy objective values (same shape as Y_true)
+        Y_true:  (n_points, M) true objective values
+    """
+    if bounds is None:
+        bounds = np.tile([0.0, 1.0], (dim, 1))  # [[0,1],[0,1],...]
+
+    sampler = qmc.LatinHypercube(d=dim, seed=seed)
+    X_unit = sampler.random(n=n_points)  # (n_points, dim) in [0,1]
+
+    # Scale to bounds
+    X_train = qmc.scale(X_unit, bounds[:, 0], bounds[:, 1])
+
     # Evaluate true objectives
     Y_true = synthetic_objectives(X_train)
-    
+
     # Add Gaussian noise
-    noise = np.random.normal(0, noise_std, Y_true.shape)
+    rng = np.random.default_rng(seed + 1)  # separate seed for noise
+    noise = rng.normal(0.0, noise_std, size=Y_true.shape)
     Y_noisy = Y_true + noise
-    
+
     return X_train, Y_noisy, Y_true
 
 def plot_true_objectives():
@@ -208,7 +234,7 @@ def plot_objective_space(Y_data, labels, title="Objective Space"):
 
 def plot_mobo_progression(batch_info, hypervolumes):
     """Plot the MOBO progression over iterations"""
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    fig, axes = plt.subplots(1, 2, figsize=(18, 6))
     
     # Plot 1: Hypervolume progression
     batches = [info['batch'] for info in batch_info]
@@ -228,21 +254,21 @@ def plot_mobo_progression(batch_info, hypervolumes):
     axes[1].set_title('Pareto Front Growth')
     axes[1].grid(True, alpha=0.3)
     
-    # Plot 3: Objective space evolution
-    colors = plt.cm.viridis(np.linspace(0, 1, len(batch_info)))
-    for i, (info, color) in enumerate(zip(batch_info, colors)):
-        Y_batch = info['Y_batch']
-        alpha = 0.3 if i < len(batch_info) - 1 else 1.0
-        size = 20 if i < len(batch_info) - 1 else 60
-        label = f'Batch {i} (N={info["n_points"]})'
-        axes[2].scatter(Y_batch[:, 0], Y_batch[:, 1], 
-                       c=[color], alpha=alpha, s=size, label=label)
+    # # Plot 3: Objective space evolution
+    # colors = plt.cm.viridis(np.linspace(0, 1, len(batch_info)))
+    # for i, (info, color) in enumerate(zip(batch_info, colors)):
+    #     Y_batch = info['Y_batch']
+    #     alpha = 0.3 if i < len(batch_info) - 1 else 1.0
+    #     size = 20 if i < len(batch_info) - 1 else 60
+    #     label = f'Batch {i} (N={info["n_points"]})'
+    #     axes[2].scatter(Y_batch[:, 0], Y_batch[:, 1], 
+    #                    c=[color], alpha=alpha, s=size, label=label)
     
-    axes[2].set_xlabel('Objective 1 (Inverted Quadratic)')
-    axes[2].set_ylabel('Objective 2 (Sinusoidal)')
-    axes[2].set_title('Objective Space Evolution')
-    axes[2].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    axes[2].grid(True, alpha=0.3)
+    # axes[2].set_xlabel('Objective 1 (Inverted Quadratic)')
+    # axes[2].set_ylabel('Objective 2 (Sinusoidal)')
+    # axes[2].set_title('Objective Space Evolution')
+    # axes[2].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    # axes[2].grid(True, alpha=0.3)
     
     plt.tight_layout()
     plt.savefig('mobo_progression.png', dpi=150, bbox_inches='tight')
@@ -429,13 +455,13 @@ def test_mobo_loop(n_initial=20, n_batches=5, batch_size=10, seed=42):
             # Use different kernels for different objectives
             kernels = [
                 lambda d: RBFKernel(ard_num_dims=d),       # Smooth for inverted quadratic
-                lambda d: MaternKernel(nu=1.5, ard_num_dims=d)  # Flexible for sinusoidal
+                lambda d: PeriodicKernel(ard_num_dims=d)  # Flexible for sinusoidal
             ]
             noise_priors = None #[LogNormalPrior(-4.0, 0.5), LogNormalPrior(-3.5, 0.5)]
             
             model = fit_gp_models(X_t, Y_t)#, kernel_fn=kernels, noise_priors=noise_priors)
             plot_gp_predictions(model, X_all, Y_all, f"(N={len(X_all)})")
-            plot_shap(design, X_all, model)
+            #plot_shap(design, X_all, model)
             print("✓ GP models fitted a")
             for i, gp in enumerate(model.models):    
                 print("Lengthscales:", gp.covar_module.base_kernel.lengthscale.detach().cpu().numpy().flatten())
@@ -585,15 +611,15 @@ def compute_pareto_front(Y, minimize=False):
 if __name__ == "__main__":
     # Run GP modeling test
     print("Starting synthetic test with maximization objectives...")
-    # = test_gp_pipeline()
+    gp_results = test_gp_pipeline()
     
     # Run MOBO loop test
     print("\n" + "="*60)
     mobo_results = test_mobo_loop(n_initial=20, n_batches=5, batch_size=5)
     
-    # print(f"\n🎯 SYNTHETIC TEST SUMMARY:")
-    # print(f"GP modeling: ✓ Completed")
-    # print(f"MOBO loop: ✓ Completed ({len(mobo_results['X_final'])} total points)")
-    # print(f"Hypervolume improvement: {mobo_results['hypervolumes'][-1] - mobo_results['hypervolumes'][0]:.6f}")
-    # print(f"Final Pareto points: {mobo_results['batch_info'][-1]['n_pareto']}")
-    # print("All plots saved to current directory ✓")
+    print(f"\n🎯 SYNTHETIC TEST SUMMARY:")
+    print(f"GP modeling: ✓ Completed")
+    print(f"MOBO loop: ✓ Completed ({len(mobo_results['X_final'])} total points)")
+    print(f"Hypervolume improvement: {mobo_results['hypervolumes'][-1] - mobo_results['hypervolumes'][0]:.6f}")
+    print(f"Final Pareto points: {mobo_results['batch_info'][-1]['n_pareto']}")
+    print("All plots saved to current directory ✓")

@@ -1,11 +1,24 @@
-numpy
-pandas
-scipy
-matplotlib
-seaborn
-scikit-learn
-emukit
-# These depend on PyTorch; versions vary by OS, CUDA, and Python
-torch
-gpytorch
-botorch
+# Core scientific stack
+numpy>=1.21.0
+pandas>=1.3.0
+scikit-learn>=1.0.0
+matplotlib>=3.5.0
+seaborn>=0.11.0
+pyyaml>=6.0
+scipy>=1.7.0
+
+# PyTorch & probabilistic programming
+torch>=1.12.0
+gpytorch>=1.8.0
+botorch>=0.8.0
+
+# Experimental design / optimization
+emukit>=0.4.10
+
+# Optional: Jupyter for notebooks
+jupyter>=1.0.0
+ipykernel>=6.0.0
+
+# Additional dependencies
+shap>=0.41.0
+pyDOE>=0.3.8

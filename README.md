@@ -1,4 +1,4 @@
-# README: MOBO-FOM
+# README: MOBO-Kit
 by Ethan Schwartz, Daniel Abdoue, Nicky Evans, and Tonio Buonassisi
 <h1>
 <p align="center">
@@ -14,7 +14,7 @@ by Ethan Schwartz, Daniel Abdoue, Nicky Evans, and Tonio Buonassisi
 
 </h4>
 
-**Multiobjective Bayesian Optimization for FOM Slot-Die Coating** is an open-source framework for optimizing functional thin-film fabrication via **multi-objective Bayesian optimization**. Developed collaboratively across University of Washington, UC San Diego, and MIT, this toolkit enables the rapid design of high-performance films by balancing multiple Figures of Merit (FOMs) in slot-die coating experiments, for example efficiency, repeatability, and stability. Funding provided by the ADDEPT Center, sponsored by the US Department of Energy's Solar Energy Technology Office.
+**MOBO-Kit** is an open-source toolkit for optimizing functional thin-film fabrication via **multi-objective Bayesian optimization**. Developed collaboratively across University of Washington, UC San Diego, and MIT, this toolkit enables the rapid design of high-performance films by balancing multiple Figures of Merit (FOMs) in slot-die coating experiments, for example efficiency, repeatability, and stability. Funding provided by the ADDEPT Center, sponsored by the US Department of Energy's Solar Energy Technology Office.
 
 ---
 
@@ -36,10 +36,138 @@ by Ethan Schwartz, Daniel Abdoue, Nicky Evans, and Tonio Buonassisi
 
 ## Installation
 
-We recommend creating a clean Python environment using `uv` or `venv`:
+### Option 1: Install from Source (Recommended)
+
+We recommend creating a clean Python environment using `conda` or `venv`:
 
 ```bash
-pip install uv
-uv venv .venv --python 3.10
-source .venv/bin/activate
-uv pip install -e .
+# Create and activate environment
+conda create -n mobo-fom python=3.10
+conda activate mobo-fom
+
+# Or using venv
+python -m venv mobo-env
+source mobo-env/bin/activate  # On Windows: mobo-env\Scripts\activate
+
+# Install MOBO-Kit
+git clone https://github.com/PV-Lab/MOBO-FOM.git
+cd MOBO-FOM
+pip install -e .
+```
+
+### GPU Support (CUDA)
+
+MOBO-Kit uses PyTorch for machine learning models. By default, the installation includes the CPU-only version of PyTorch. For GPU acceleration, you'll need to install the CUDA version of PyTorch.
+
+**Check your CUDA version:**
+```bash
+nvidia-smi
+```
+
+**Install PyTorch with CUDA support:**
+```bash
+# For CUDA 12.1 (recommended for most systems)
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# For CUDA 11.8 (more compatible with older systems)
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# For CUDA 12.4
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+
+# For CUDA 12.8 (latest)
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+```
+
+**Verify GPU support:**
+```python
+import torch
+print("CUDA available:", torch.cuda.is_available())
+print("Device count:", torch.cuda.device_count())
+```
+
+### Option 2: Install with pip
+
+```bash
+pip install mobo-kit
+```
+
+### Option 3: Google Colab
+
+```python
+# Install in Google Colab
+!pip install git+https://github.com/PV-Lab/MOBO-FOM.git
+
+# Import and use
+import mobo_kit
+```
+
+### Dependencies
+
+MOBO-Kit requires:
+- Python 3.10+
+- PyTorch 1.12+
+- BoTorch 0.8+
+- GPyTorch 1.8+
+- NumPy, Pandas, Scikit-learn
+- Matplotlib, Seaborn
+
+See `requirements.txt` for the complete list of dependencies.
+
+## Quick Start
+
+### 1. Command Line Interface
+
+```bash
+# Run with default configuration
+mobo-kit --csv data/processed/configCSV_example.csv
+
+# Run with custom output directory
+mobo-kit --csv data/my_data.csv --out results/my_experiment
+
+# Run with verbose output
+mobo-kit --csv data/my_data.csv --verbose
+```
+
+### 2. Python API
+
+```python
+import mobo_kit
+from mobo_kit.main import main
+
+# Run the main workflow
+main()
+```
+
+### 3. Jupyter Notebooks
+
+See the `notebooks/` directory for interactive examples:
+- `MOBO_demo_annotated.ipynb` - Complete workflow demonstration
+
+## Configuration
+
+MOBO-Kit uses YAML configuration files. See `configs/` directory for examples:
+
+- `demo_config.yaml` - Basic configuration
+- `configCSV_example_config.yaml` - Configuration from CSV metadata
+
+### Configuration Structure
+
+```yaml
+inputs:
+  - name: "parameter1"
+    unit: "unit"
+    start: 0.0
+    stop: 1.0
+    step: 0.01
+
+objectives:
+  names: ["objective1", "objective2", "objective3"]
+
+constraints:
+  - clausius_clapeyron: true
+    ah_col: "absolute_humidity"
+    temp_c_col: "temperature_c"
+
+files:
+  save_dir: "results/demo"
