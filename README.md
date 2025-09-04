@@ -14,20 +14,30 @@ by Ethan Schwartz, Daniel Abdoue, Nicky Evans, and Tonio Buonassisi
 
 </h4>
 
-**MOBO-Kit** is an open-source toolkit for optimizing functional thin-film fabrication via **multi-objective Bayesian optimization**. Developed collaboratively across University of Washington, UC San Diego, and MIT, this toolkit enables the rapid design of high-performance films by balancing multiple Figures of Merit (FOMs) in slot-die coating experiments, for example efficiency, repeatability, and stability. Funding provided by the ADDEPT Center, sponsored by the US Department of Energy's Solar Energy Technology Office.
+**MOBO-Kit** is an open-source toolkit for accelerating design of experiments via **multi-objective Bayesian optimization**. Developed collaboratively across University of Washington, UC San Diego, and MIT, this toolkit enables rapid optimization of complex systems by balancing multiple objectives across any number of inputs and outputs (>2). While demonstrated for slot-die coating experiments (e.g., optimizing efficiency, repeatability, and stability), MOBO-Kit is generalizable to any multi-objective optimization problem.
+
+## Key Features
+
+MOBO-Kit provides a complete package for multi-objective Bayesian optimization with:
+- **Latin Hypercube Sampling** for initial experiment design
+- **Gaussian Process models** with BoTorch
+- **Multi-objective acquisition functions** (qNEHVI)
+- **Batch candidate proposal** for efficient parallel experimentation
+- **Comprehensive plotting and analysis tools**
+- **Constraint handling** for complex design spaces
+- **Command-line interface** and Python API
 
 ---
 
 ## Table of Contents
 
+- [Key Features](#key-features)
 - [Installation](#installation)
-- [Overview](#overview)
-- [Data Format](#data-format)
-- [Deciding Which Input/Output Variables to Study](#decide)
-- [Initial Sampling of Input Parameter Space](#data-format)
-- [Training a Surrogate Model](#training-surrogate-models)
-- [Evaluation and Visualization](#evaluation-and-visualization)
-- [Performing Multi-Objective Optimization](#evaluation-and-visualization)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [Package Structure](#package-structure)
+- [Troubleshooting](#troubleshooting)
+- [Next Steps](#next-steps)
 - [Citation](#citation)
 - [License](#license)
 - [Get in Touch](#get-in-touch)
@@ -54,6 +64,11 @@ git clone https://github.com/PV-Lab/MOBO-FOM.git
 cd MOBO-FOM
 pip install -e .
 ```
+
+This will automatically install all required dependencies including:
+- Core scientific computing: numpy, pandas, scipy, matplotlib, seaborn, scikit-learn
+- Machine learning: torch, gpytorch, botorch, emukit
+- Additional tools: shap, pyDOE, pyyaml
 
 ### GPU Support (CUDA)
 
@@ -94,6 +109,10 @@ pip install mobo-kit
 
 ### Option 3: Google Colab
 
+**Option 3a: Direct Notebook Link**
+- [Open MOBO-Kit notebook in Google Colab](https://colab.research.google.com/drive/1VzlCSTDw42kWxlI2xNUAOfmCZpLeKpN0?usp=sharing)
+
+**Option 3b: Install in your own Colab notebook**
 ```python
 # Install in Google Colab
 !pip install git+https://github.com/PV-Lab/MOBO-FOM.git
@@ -139,10 +158,33 @@ from mobo_kit.main import main
 main()
 ```
 
-### 3. Jupyter Notebooks
+### 3. Advanced Usage Examples
+
+```python
+# Generate initial experiments
+from mobo_kit.main import generate_initial_experiments
+
+results = generate_initial_experiments(
+    config_path="configs/demo_config.yaml",
+    n_samples=20,
+    save_path="initial_experiments.csv"
+)
+
+# Run MOBO optimization with custom parameters
+from mobo_kit.main import run_mobo_experiment
+
+results = run_mobo_experiment(
+    csv_path="data/processed/configCSV_example.csv",
+    save_dir="results/experiment",
+    verbose=True
+)
+```
+
+### 4. Jupyter Notebooks
 
 See the `notebooks/` directory for interactive examples:
 - `MOBO_demo_annotated.ipynb` - Complete workflow demonstration
+  - *Note*: The LOOCV function may have trouble converging on small noisy datasets and is still in development.
 
 ## Configuration
 
@@ -162,9 +204,84 @@ inputs:
     step: 0.01
 
 objectives:
-  names: ["objective1", "objective2", "objective3"]
+  names:
+  - objective 1
+  - objective 2
+  - objective 3
 
 constraints:
   - clausius_clapeyron: true
     ah_col: "absolute_humidity"
     temp_c_col: "temperature_c"
+
+## Package Structure
+
+```
+src/mobo_kit/
+├── main.py          # Main API functions
+├── cli.py           # Command-line interface
+├── design.py        # Design space construction
+├── data.py          # Data loading and preprocessing
+├── models.py        # Gaussian Process models
+├── acquisition.py   # Acquisition functions and batch proposal
+├── lhs.py           # Latin Hypercube Sampling
+├── plotting.py      # Visualization tools
+├── metrics.py       # Performance metrics
+├── constraints.py   # Constraint handling
+└── utils.py         # Utility functions
+```
+
+## Troubleshooting
+
+### Common Installation Issues
+
+1. **Import errors**: Ensure all dependencies are installed:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. **CUDA/GPU support**: Install PyTorch with CUDA (example, please use matching nvidia-smi):
+   ```bash
+   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+   ```
+
+3. **Python version compatibility**: Use Python 3.10 or 3.11:
+   ```bash
+   conda create -n mobo-kit python=3.10
+   conda activate mobo-kit
+   pip install -e .
+   ```
+
+4. **Jupyter notebook support**:
+   ```bash
+   pip install jupyter ipykernel
+   python -m ipykernel install --user --name=mobo-kit --display-name "Python (mobo-kit)"
+   ```
+
+### Runtime Issues
+
+- **Memory issues**: For large datasets, consider using CPU instead of GPU or reducing batch sizes
+- **Convergence issues**: The LOOCV function may have trouble converging on small noisy datasets
+- **CUDA out of memory**: Reduce batch size or use CPU mode
+
+## Next Steps
+
+1. **Try the demo**: `mobo-kit --csv data/processed/configCSV_example.csv --verbose`
+2. **Generate initial experiments**: `mobo-kit generate --config configs/demo_config.yaml --n-samples 20 --out my_experiments.csv`
+3. **Explore Jupyter notebooks** in the `notebooks/` directory
+4. **Check configuration examples** in the `configs/` directory
+
+## Citation
+
+*Citation information will be added upon publication.*
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Get in Touch
+
+For questions, issues, or contributions, please:
+- Open an issue on GitHub
+- Contact the development team
+- Check the documentation in the `notebooks/` directory
