@@ -70,7 +70,7 @@ This will automatically install all required dependencies including:
 - Machine learning: torch, gpytorch, botorch, emukit
 - Additional tools: shap, pyDOE, pyyaml
 
-### GPU Support (CUDA)
+### GPU Support (CUDA [Windows])
 
 MOBO-Kit uses PyTorch for machine learning models. By default, the installation includes the CPU-only version of PyTorch. For GPU acceleration, you'll need to install the CUDA version of PyTorch.
 
