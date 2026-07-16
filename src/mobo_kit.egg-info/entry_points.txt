@@ -1,0 +1,3 @@
+[console_scripts]
+mobo-kit = mobo_kit.cli:main
+mobo-kit-run = mobo_kit.main:main
