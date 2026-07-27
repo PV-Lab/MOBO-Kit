@@ -1,0 +1,133 @@
+# Public Step 2B algorithm-debugging template. This file never authorizes films.
+# It intentionally has no private workbook identity and is not directly runnable.
+schema_version: d2d-step2b-debug-1
+campaign_id: public-d2d-template-debug
+template_only: true
+run_mode: debug
+debug_run_authorized: true
+approved_for_production: false
+approved_for_experiment: false
+
+decision_record:
+  source: public-template
+  status: runtime_private_config_required
+  known_data_issue: supplied_scores_must_be_validated_at_runtime
+
+workbook:
+  profile: d2d_summary_v3_scores
+  sheet: Sheet1
+  expected_content_range: A1:AI20
+  expected_sha256: REQUIRED_IN_IGNORED_PRIVATE_CONFIG
+  input_aliases:
+    "precur_vol (uL)": precur_vol
+  sample_id_column: Sample number
+  expected_sample_ids: [1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014, 1015]
+
+inputs:
+  - {name: speed_1, unit: rpm, start: 1000, stop: 6000, step: 500}
+  - {name: time_1, unit: s, start: 5, stop: 50, step: 5}
+  - {name: speed_2, unit: rpm, start: 0, stop: 5000, step: 500}
+  - {name: time_2, unit: s, start: 10, stop: 60, step: 5}
+  - {name: precur_conc, unit: M, start: 1.0, stop: 2.0, step: 0.05}
+  - {name: precur_vol, unit: uL, start: 40, stop: 200, step: 10}
+  - {name: anneal_temp, unit: C, start: 100, stop: 185, step: 5}
+  - {name: anneal_time, unit: min, start: 10, stop: 60, step: 5}
+  - {name: anti_vol, unit: uL, start: 100, stop: 200, step: 5}
+  - {name: anti_time, unit: s, start: 9, stop: 25, step: 2}
+
+objectives:
+  - name: uniformity_score
+    source_column: Uniformity score
+    excel_column: Z
+    direction: maximize
+    utility_transform: identity
+    support_formula: Coverage * (1 - Uniformity) * Phase purity
+    mismatch_policy: warn_use_supplied
+  - name: optoelectronic_score
+    source_column: Optoelectronic score
+    excel_column: AA
+    direction: maximize
+    utility_transform: identity
+    support_formula: log10((PL - Implied Voc (Max)) * Photoconductance (Max))
+    mismatch_policy: error
+  - name: thickness_score
+    source_column: Thickness score
+    excel_column: AB
+    direction: maximize
+    utility_transform: identity
+    support_formula: exp(-((mean(valid T1:T4) - 650.0) / 250.0)^2)
+    target_nm: 650.0
+    scale_nm: 250.0
+    exponent_factor: 1.0
+    exclude_columns: [T anom]
+    mismatch_policy: error
+
+ignored_model_columns:
+  - Stability score?
+  - Total combination - addition
+  - Total combination - multiplied
+  - Uniformity score absolute difference
+  - Optoelectronic score absolute difference
+  - Thickness absolute difference
+  - Total score absolute difference
+
+reference_point_utility: [-0.01, -10.0, -0.01]
+constraints: []
+
+r0:
+  condition_count: 15
+  control_sample_ids: [1001]
+  include_control_in_debug_model: true
+  control_measurement_provenance_assumption: measured_in_synthetic_fixture
+  off_grid_observed_exceptions:
+    - sample_id: 1001
+      input_name: speed_1
+      observed_value_strategy: midpoint_between_first_two_grid_values
+      reason: algorithmic synthetic off-grid sentinel for public tests
+      retain_observed_value: true
+
+qc_policy:
+  final_scores_required: true
+  complete_case_rule: require_all_three_final_scores
+  failed_measurement_rule: block_row
+  outlier_rule: report_do_not_auto_remove
+  uniformity_known_mismatch: warn_and_continue_debug
+  optoelectronic_mismatch: fail
+  thickness_mismatch: fail
+
+r1:
+  method: ucb_hvi
+  batch_size_unique_conditions: 5
+  replicates_per_condition: 3
+  beta: 4.0
+  posterior_samples: 256
+  candidate_pool_size: 10000
+  score_chunk_size: 512
+
+r2_test_only:
+  method: qlognehvi
+  batch_size_unique_conditions: 3
+  replicates_per_condition: 3
+  mc_samples: 128
+  candidate_pool_size: 5000
+  sequential_pending: true
+
+local_penalization:
+  distance_metric: normalized_euclidean
+  radius: 0.25
+  min_batch_distance: 0.15
+  min_observed_distance: 0.0
+  dimension_weights: null
+  allow_hard_distance_relaxation: false
+
+reproducibility:
+  seed: 73
+  record_git_commit: true
+  record_environment_versions: true
+  record_resolved_config_hash: true
+  record_workbook_hash: true
+
+outputs:
+  root: local_outputs/d2d_step2b_debug
+  debug_watermark: DEBUG ONLY - NOT APPROVED FOR EXPERIMENT
+  write_source_workbook: false

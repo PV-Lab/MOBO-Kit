@@ -1,0 +1,68 @@
+# Canonical D2D input grid for Step 1 infrastructure tests.
+#
+# Objective formulas, control policy, process constraints, and campaign reference
+# point are intentionally unresolved. This file must not be used to generate R1/R2
+# candidates until those scientific decisions are approved and recorded.
+campaign:
+  name: D2D_FA0.9Cs0.1PbI3
+  status: baseline_only
+
+inputs:
+  - name: speed_1
+    unit: rpm
+    start: 1000
+    stop: 6000
+    step: 500
+  - name: time_1
+    unit: s
+    start: 5
+    stop: 50
+    step: 5
+  - name: speed_2
+    unit: rpm
+    start: 0
+    stop: 5000
+    step: 500
+  - name: time_2
+    unit: s
+    start: 10
+    stop: 60
+    step: 5
+  - name: precur_conc
+    unit: M
+    start: 1.00
+    stop: 2.00
+    step: 0.05
+  - name: precur_vol
+    unit: uL
+    start: 40
+    stop: 200
+    step: 10
+  - name: anneal_temp
+    unit: C
+    start: 100
+    stop: 185
+    step: 5
+  - name: anneal_time
+    unit: min
+    start: 10
+    stop: 60
+    step: 5
+  - name: anti_vol
+    unit: uL
+    start: 100
+    stop: 200
+    step: 5
+  - name: anti_time
+    unit: s
+    start: 9
+    stop: 25
+    step: 2
+
+objectives:
+  # TBD - experimental-team decision. Empty by design in Step 1.
+  names: []
+
+# No D2D process constraint has been approved. In particular, the legacy
+# humidity/temperature Clausius-Clapeyron constraint does not apply here.
+constraints: []

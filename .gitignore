@@ -14,6 +14,11 @@ ENV/
 env/
 mobo-env/
 
+# Private campaign inputs (never commit experimental workbooks/data)
+local_inputs/
+local_outputs/
+*_PRIVATE_EVIDENCE_DO_NOT_SHARE.zip
+
 # Distribution / packaging
 .Python
 build/
@@ -55,4 +60,5 @@ Desktop.ini
 .tox/
 .nox/
 .pytest_cache/
+.mypy_cache/
 htmlcov/

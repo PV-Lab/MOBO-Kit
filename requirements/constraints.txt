@@ -1,0 +1,19 @@
+# Step 1 CPU-tested direct dependency stack. Keep these versions synchronized
+# with pyproject.toml and docs/STEP1_HANDOFF.md.
+numpy==2.2.6
+pandas==2.3.1
+scikit-learn==1.7.1
+matplotlib==3.10.3
+seaborn==0.13.2
+PyYAML==6.0.2
+scipy==1.16.0
+torch==2.8.0
+gpytorch==1.14
+botorch==0.15.1
+linear_operator==0.6
+shap==0.48.0
+openpyxl==3.1.5
+Pillow==12.3.0
+pytest==8.4.1
+pytest-cov==6.2.1
+black==25.1.0

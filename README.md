@@ -10,7 +10,7 @@ by Ethan Schwartz, Daniel Abdoue, Nicky Evans, and Tonio Buonassisi
 
 [![DOI](https://img.shields.io/badge/DOI-TBD-blue)](https://doi.org/TBD)
 [![arXiv](https://img.shields.io/badge/arXiv-TBD-blue.svg?logo=arxiv&logoColor=white.svg)](https://arxiv.org/abs/TBD)
-[![Requires Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg?logo=python&logoColor=white)](https://python.org/downloads)
+[![Requires Python 3.11-3.12](https://img.shields.io/badge/Python-3.11--3.12-blue.svg?logo=python&logoColor=white)](https://python.org/downloads)
 
 </h4>
 
@@ -52,46 +52,34 @@ We recommend creating a clean Python environment using `conda` or `venv`:
 
 ```bash
 # Create and activate environment
-conda create -n mobo-fom python=3.10
-conda activate mobo-fom
+conda create -n mobo-kit python=3.11
+conda activate mobo-kit
 
 # Or using venv
 python -m venv mobo-env
 source mobo-env/bin/activate  # On Windows: mobo-env\Scripts\activate
 
 # Install MOBO-Kit
-git clone https://github.com/PV-Lab/MOBO-FOM.git
-cd MOBO-FOM
-pip install -e .
+git clone https://github.com/PV-Lab/MOBO-Kit.git
+cd MOBO-Kit
+python -m pip install -r requirements/dev.txt
 ```
 
-This will automatically install all required dependencies including:
-- Core scientific computing: numpy, pandas, scipy, matplotlib, seaborn, scikit-learn
-- Machine learning: torch, gpytorch, botorch, emukit
-- Additional tools: shap, pyDOE, pyyaml
+This installs the core scientific stack, the tested Torch/GPyTorch/BoTorch
+combination, workbook auditing support, and the development test tools.
 
-### GPU Support (CUDA [Windows])
+### Optional GPU support
 
-MOBO-Kit uses PyTorch for machine learning models. By default, the installation includes the CPU-only version of PyTorch. For GPU acceleration, you'll need to install the CUDA version of PyTorch.
+The Step 1 campaign baseline is tested on CPU with PyTorch 2.8.0. GPU wheels
+are platform- and CUDA-specific and are not part of that tested baseline. If a
+later workflow requires a GPU, install a PyTorch **2.8.0** build using the
+[official PyTorch previous-versions instructions](https://pytorch.org/get-started/previous-versions/),
+then rerun the import and test smoke checks. Installing an arbitrary newer
+Torch release invalidates the pinned BoTorch/GPyTorch compatibility claim.
 
 **Check your CUDA version:**
 ```bash
 nvidia-smi
-```
-
-**Install PyTorch with CUDA support:**
-```bash
-# For CUDA 12.1 (recommended for most systems)
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-
-# For CUDA 11.8 (more compatible with older systems)
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-
-# For CUDA 12.4
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-
-# For CUDA 12.8 (latest)
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 ```
 
 **Verify GPU support:**
@@ -101,51 +89,43 @@ print("CUDA available:", torch.cuda.is_available())
 print("Device count:", torch.cuda.device_count())
 ```
 
-### Option 2: Install with pip (once software license received)
+### Distribution status
 
-```bash
-pip install mobo-kit
-```
-
-### Option 3: Google Colab
-
-**Option 3a: Direct Notebook Link**
-- [Open MOBO-Kit notebook in Google Colab](https://colab.research.google.com/drive/1VzlCSTDw42kWxlI2xNUAOfmCZpLeKpN0?usp=sharing)
-
-**Option 3b: Install in your own Colab notebook**
-```python
-# Install in Google Colab
-!pip install git+https://github.com/PV-Lab/MOBO-FOM.git
-
-# Import and use
-import mobo_kit
-```
+The source/editable installation above is the only installation path validated
+for the Step 1 campaign baseline. A PyPI release and the historical Colab link
+are not treated as production campaign environments until they have their own
+versioned release and smoke-test workflow.
 
 ### Dependencies
 
 MOBO-Kit requires:
-- Python 3.10+
-- PyTorch 1.12+
-- BoTorch 0.8+
-- GPyTorch 1.8+
+- Python 3.11 or 3.12
+- PyTorch 2.8.x
+- BoTorch 0.15.1
+- GPyTorch 1.14
 - NumPy, Pandas, Scikit-learn
 - Matplotlib, Seaborn
+- openpyxl for read-only campaign-workbook auditing
+- Pillow for image-artifact validation
 
-See `requirements.txt` for the complete list of dependencies.
+The tested probabilistic stack is pinned in `requirements/constraints.txt`.
+See `requirements.txt` for the runtime install and `requirements/dev.txt` for
+the editable test environment.
 
 ## Quick Start
 
 ### 1. Command Line Interface
 
 ```bash
-# Run with default configuration
-mobo-kit --csv data/processed/configCSV_example.csv
+# The runner accepts the repository's metadata-style campaign CSV format.
+# Run model fitting and diagnostics without proposing candidates:
+mobo-kit run --csv data/processed/configCSV_example.csv
 
 # Run with custom output directory
-mobo-kit --csv data/my_data.csv --out results/my_experiment
+mobo-kit run --csv data/my_data.csv --out local_outputs/my_experiment
 
 # Run with verbose output
-mobo-kit --csv data/my_data.csv --verbose
+mobo-kit run --csv data/my_data.csv --verbose
 ```
 
 ### 2. Python API
@@ -175,16 +155,74 @@ from mobo_kit.main import run_mobo_experiment
 
 results = run_mobo_experiment(
     csv_path="data/processed/configCSV_example.csv",
-    save_dir="results/experiment",
-    verbose=True
+    save_dir="local_outputs/experiment",
+    verbose=True,
+    propose_candidates=False,
 )
 ```
+
+`generate` writes an input-only R0 worklist. It is intentionally not accepted
+directly by the legacy `run` proposal path. Campaign-specific workbook adapters
+own that boundary and must validate their objective and state contracts first.
 
 ### 4. Jupyter Notebooks
 
 See the `notebooks/` directory for interactive examples:
 - `MOBO_demo_annotated.ipynb` - Complete workflow demonstration
+- `D2D_MOBO_TEST Global Distance Candidate generation.ipynb` - D2D Step 2B
+  score validation and guarded debug-adapter interface
   - *Note*: The LOOCV function may have trouble converging on small noisy datasets and is still in development.
+
+### 5. D2D Step 2B algorithm debugging
+
+The D2D adapter requires explicit paths to an ignored private workbook and its
+matching ignored private configuration. The tracked configuration is a
+non-runnable public template with no workbook identity. The adapter reads the
+workbook without saving it, uses the supplied Z/AA/AB final scores directly,
+and writes only ignored, watermarked debug artifacts:
+
+```bash
+python examples/d2d_step2b_debug.py \
+  --workbook local_inputs/<private-workbook>.xlsx \
+  --config local_inputs/d2d_step2b_private.yaml
+```
+
+This command is deliberately **not** experimental approval. Its five-condition
+proposal and 15-row replicate file are labelled `DEBUG ONLY - NOT APPROVED FOR
+EXPERIMENT`. The legacy `run --propose-candidates` path remains blocked.
+
+### 6. D2D Step 2C robustness audit
+
+Step 2C validates the small-data GP models, measures all-observation influence,
+checks nested Sobol search convergence, refines candidates on the exact discrete
+grid, and summarizes persistent candidate regions. It remains read-only and
+debug-only:
+
+```bash
+# Generated sanitized workbook, small pools, and atomic artifact/ZIP CI coverage
+python examples/d2d_step2c_synthetic_ci.py --overwrite
+
+# Quick integration smoke; never eligible to emit a consensus batch
+python examples/d2d_step2c_robustness.py --mode fast
+
+# Declared 16,384/32,768/65,536/131,072 robustness study
+python examples/d2d_step2c_robustness.py --mode full
+```
+
+Artifacts are written below the Git-ignored
+`local_outputs/d2d_step2c_robustness/` directory. Every table and plot is
+watermarked `DEBUG ONLY - NOT APPROVED FOR EXPERIMENT`; the source workbook is
+hash/mtime checked before and after; no workbook writeback or real R2 proposal
+is performed. A five-row consensus debug file is possible only in full mode and
+only when every declared stability gate passes. Otherwise, the bundle records
+the failed gates in `r1_no_stable_batch_reason.json`.
+
+The synthetic CI command creates no private fixture and cannot make the guarded
+campaign command accept another workbook. It covers the real v3 read-only
+adapter, GP/search orchestration, strict artifact validator, atomic replacement,
+and an aggregate-only public summary ZIP on generated sanitized data. Private
+campaign runs keep their complete evidence in a separately labelled
+`*_PRIVATE_EVIDENCE_DO_NOT_SHARE.zip` archive below the ignored output root.
 
 ## Configuration
 
@@ -192,6 +230,10 @@ MOBO-Kit uses YAML configuration files. See `configs/` directory for examples:
 
 - `demo_config.yaml` - Basic configuration
 - `configCSV_example_config.yaml` - Configuration from CSV metadata
+- `d2d_step2b_debug.yaml` - Non-runnable public template; campaign runs require
+  a matching ignored private config and workbook
+- `d2d_step2c_debug.yaml` - Public synthetic-CI template; private robustness
+  runs require explicit ignored campaign inputs
 
 ### Configuration Structure
 
@@ -213,6 +255,11 @@ constraints:
   - clausius_clapeyron: true
     ah_col: "absolute_humidity"
     temp_c_col: "temperature_c"
+```
+
+Constraints are opt-in. A generic campaign configuration should use
+`constraints: []`; the example above is only for a design that actually
+contains the two named humidity/temperature inputs.
 
 ## Package Structure
 
@@ -240,16 +287,16 @@ src/mobo_kit/
    pip install -r requirements.txt
    ```
 
-2. **CUDA/GPU support**: Install PyTorch with CUDA (example, please use matching nvidia-smi):
-   ```bash
-   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-   ```
+2. **CUDA/GPU support**: Keep Torch at 2.8.0 and follow the official
+   platform-specific installation instructions linked above. GPU behavior was
+   not validated in the Step 1 baseline.
 
-3. **Python version compatibility**: Use Python 3.10 or 3.11:
+3. **Python version compatibility**: Python 3.11-3.12 is supported; the Step 1
+   CPU baseline was tested with Python 3.12.10:
    ```bash
-   conda create -n mobo-kit python=3.10
+   conda create -n mobo-kit python=3.11
    conda activate mobo-kit
-   pip install -e .
+   python -m pip install -r requirements/dev.txt
    ```
 
 4. **Jupyter notebook support**:
@@ -266,8 +313,8 @@ src/mobo_kit/
 
 ## Next Steps
 
-1. **Try the demo**: `mobo-kit --csv data/processed/configCSV_example.csv --verbose`
-2. **Generate initial experiments**: `mobo-kit generate --config configs/demo_config.yaml --n-samples 20 --out my_experiments.csv`
+1. **Try the demo**: `mobo-kit run --csv data/processed/configCSV_example.csv --verbose`
+2. **Generate initial experiments**: `mobo-kit generate --config configs/demo_config.yaml --n-samples 20 --out local_outputs/my_experiments.csv`
 3. **Explore Jupyter notebooks** in the `notebooks/` directory
 4. **Check configuration examples** in the `configs/` directory
 

@@ -1,0 +1,96 @@
+# Step 2A configuration skeleton only.
+# This file MUST NOT authorize a real candidate-generation run.
+
+schema_version: d2d-step2a-provisional-1
+campaign_id: PENDING
+approved_for_production: false
+approval:
+  approved_by: PENDING
+  approved_at: PENDING
+  decision_record: docs/D2D_MEETING_DECISIONS.md
+
+workbook:
+  profile: d2d_summary_v2
+  sheet: Sheet1
+  expected_content_range: A1:AC18
+  expected_sha256: REQUIRED_IN_IGNORED_PRIVATE_CONFIG
+  input_aliases:
+    "precur_vol (uL)": precur_vol
+
+inputs:
+  - {name: speed_1, unit: rpm, start: 1000, stop: 6000, step: 500}
+  - {name: time_1, unit: s, start: 5, stop: 50, step: 5}
+  - {name: speed_2, unit: rpm, start: 0, stop: 5000, step: 500}
+  - {name: time_2, unit: s, start: 10, stop: 60, step: 5}
+  - {name: precur_conc, unit: M, start: 1.0, stop: 2.0, step: 0.05}
+  - {name: precur_vol, unit: uL, start: 40, stop: 200, step: 10}
+  - {name: anneal_temp, unit: C, start: 100, stop: 185, step: 5}
+  - {name: anneal_time, unit: min, start: 10, stop: 60, step: 5}
+  - {name: anti_vol, unit: uL, start: 100, stop: 200, step: 5}
+  - {name: anti_time, unit: s, start: 9, stop: 25, step: 2}
+
+objective_mapping_status: pending_meeting
+objectives:
+  - name: uniformity_score
+    goal: maximize
+    model_source_column: PENDING_T_OR_OTHER
+    utility_transform: PENDING
+    scaling: PENDING
+    components: [Coverage, "1 - Uniformity", "Phase purity"]
+
+  - name: optoelectronic_score
+    goal: maximize
+    model_source_column: PENDING_U_OR_OTHER
+    utility_transform: PENDING
+    scaling: PENDING
+    components:
+      - "PL - Implied Voc (Max) Normalized"
+      - "Photoconductance (Max) Normalized"
+
+  - name: thickness
+    goal: target
+    model_source_column: PENDING_V_OR_W
+    target: 650.0
+    target_transform: PENDING_GAUSSIAN_OR_OTHER
+    sigma: PENDING
+    scaling: PENDING
+
+reference_point_utility: PENDING
+
+qc_policy:
+  complete_case_rule: PENDING
+  failed_measurement_rule: PENDING
+  outlier_rule: PENDING
+  control_rule: PENDING
+  replicate_rule: PENDING
+
+constraints_status: pending_meeting
+constraints: PENDING
+
+r1:
+  method: ucb_hvi
+  batch_size: 5
+  beta: PENDING
+  posterior_samples: PENDING
+  candidate_pool_size: PENDING
+
+r2:
+  method: qlognehvi
+  batch_size: 3
+  mc_samples: PENDING
+  candidate_pool_size: PENDING
+  sequential_pending: true
+
+local_penalization:
+  distance_metric: normalized_euclidean
+  radius: PENDING
+  min_batch_distance: PENDING
+  min_observed_distance: PENDING
+  dimension_weights: null
+  allow_hard_distance_relaxation: false
+
+reproducibility:
+  seed: PENDING
+  record_git_commit: true
+  record_environment_versions: true
+  record_resolved_config_hash: true
