@@ -8,7 +8,7 @@ R2 qLogNEHVI (3), three replicate films per condition, 23 distinct conditions.
 ```python
 from mobo_kit.campaign import load_campaign_config, run_r0_lhs, run_r1_ucb, run_r2_qlognehvi
 
-config = load_campaign_config("configs/FA0.9CS0.1PbI3_260407_Config.yaml")
+config = load_campaign_config("configs/campaign_d2d_perovskite.yaml")
 
 r0 = run_r0_lhs(config, n=15)                        # space-filling, no model
 r1 = run_r1_ucb(config, X_phys, Y_model, n=5)        # UCB-HVI + local penalisation

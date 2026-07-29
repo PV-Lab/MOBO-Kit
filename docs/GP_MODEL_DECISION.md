@@ -288,7 +288,7 @@ points that disagree.
 
 - Wire the structured mean into the campaign path before generating R1
   candidates for fabrication.
-- Hypervolume reference: fixed. `configs/FA0.9CS0.1PbI3_260407_Config.yaml` now
+- Hypervolume reference: fixed. `configs/campaign_d2d_perovskite.yaml` now
   declares `reference_point_utility` in utility space after the transforms, so
   no axis dominates. The old raw-scale `[-0.01, -10.0, -0.01]` gave the
   optoelectronic axis 4.01x the uniformity axis.

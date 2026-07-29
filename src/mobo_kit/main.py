@@ -29,9 +29,21 @@ from .acquisition import propose_batch
 from .metrics import compute_ref_pareto_hv
 from .constraints import constraints_from_config
 from .lhs import lhs_dataframe_optimized
-from .production_gate import (
-    ProductionApprovalError,
-    block_legacy_campaign_proposal,
+
+
+class CampaignProposalRedirect(RuntimeError):
+    """Raised when the legacy runner is asked to propose candidates."""
+
+
+_PROPOSE_REDIRECT = (
+    "This runner fits models and reports diagnostics; it does not propose "
+    "candidates.\n"
+    "Use mobo_kit.campaign instead:\n"
+    "    from mobo_kit.campaign import load_campaign_config, run_r1_ucb\n"
+    "    config = load_campaign_config('configs/<your>.yaml')\n"
+    "    batch = run_r1_ucb(config, X_phys, Y_model, n=5)\n"
+    "campaign.py carries the objective contract, the fixed scales, and the "
+    "batch validity checks that this path never had."
 )
 
 
@@ -244,11 +256,7 @@ def run_mobo_experiment(
         with open(config_path, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
         if propose_candidates:
-            # This executes before campaign CSV parsing, model fitting, or any
-            # output-directory creation. Unapproved configs receive complete
-            # gate errors; approved configs still cannot enter the legacy
-            # raw-objective proposal implementation.
-            block_legacy_campaign_proposal(config)
+            raise CampaignProposalRedirect(_PROPOSE_REDIRECT)
         parsed_csv = parse_campaign_csv(
             csv_path, expected_objectives=get_objective_names(config)
         )
@@ -256,13 +264,7 @@ def run_mobo_experiment(
             print(f"Loaded config from: {config_path}")
     else:
         if propose_candidates:
-            raise ProductionApprovalError(
-                [
-                    "Campaign candidate proposal requires an explicit resolved "
-                    "production configuration; CSV auto-configuration is not "
-                    "scientific approval."
-                ]
-            )
+            raise CampaignProposalRedirect(_PROPOSE_REDIRECT)
         parsed_csv = parse_campaign_csv(csv_path)
         config = parsed_csv.config
         if verbose:

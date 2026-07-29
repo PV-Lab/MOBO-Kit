@@ -16,7 +16,7 @@ from mobo_kit.workbook_io import (
     write_candidate_sheet,
 )
 
-CONFIG_PATH = "configs/FA0.9CS0.1PbI3_260407_Config.yaml"
+CONFIG_PATH = "configs/campaign_d2d_perovskite.yaml"
 SOURCE = "local_inputs/Summary Table.xlsx"
 
 pytestmark = pytest.mark.skipif(

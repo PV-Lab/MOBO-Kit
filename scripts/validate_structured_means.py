@@ -103,7 +103,7 @@ def r2(y, p):
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--workbook", default="local_inputs/Summary Table.xlsx")
-    ap.add_argument("--config", default="configs/FA0.9CS0.1PbI3_260407_Config.yaml")
+    ap.add_argument("--config", default="configs/campaign_d2d_perovskite.yaml")
     args = ap.parse_args()
 
     config = load_campaign_config(args.config)

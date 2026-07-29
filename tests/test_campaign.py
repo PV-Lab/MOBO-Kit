@@ -20,7 +20,7 @@ from mobo_kit.campaign import (
 )
 from mobo_kit.design import build_design_from_config
 
-CONFIG_PATH = "configs/FA0.9CS0.1PbI3_260407_Config.yaml"
+CONFIG_PATH = "configs/campaign_d2d_perovskite.yaml"
 
 
 @pytest.fixture(scope="module")

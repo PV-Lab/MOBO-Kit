@@ -134,7 +134,7 @@ def test_invalid_specs_are_rejected(kwargs, match) -> None:
 def test_campaign_declares_the_two_measured_mean_functions() -> None:
     """Opposite shapes by design: thickness needs a pair of log terms,
     optoelectronic needs exactly one linear term. Neither generalises."""
-    config = load_campaign_config("configs/FA0.9CS0.1PbI3_260407_Config.yaml")
+    config = load_campaign_config("configs/campaign_d2d_perovskite.yaml")
     by_name = {s["name"]: s for s in config["objectives"]["specs"]}
 
     assert mean_spec_from_config(by_name["uniformity"]) is None
