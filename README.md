@@ -45,8 +45,9 @@ Each call returns a `RoundResult` with `conditions` (distinct recipes, physical
 units), `replicates` (one row per film, grouped), and `diagnostics` (seed, pool
 size, and a validity report).
 
-`docs/CAMPAIGN_STATUS.md` is the working guide: what to pass, what comes back,
-how to plot it, and the current open issues.
+**New to this repo?** Read `docs/HANDOFF.md` first — reading order, open issues in
+priority order, and the questions already settled. `docs/CAMPAIGN_STATUS.md` is the
+working guide: what to pass, what comes back, how to plot it.
 
 ## Installation
 
@@ -105,7 +106,8 @@ src/mobo_kit/
   data.py, constraints.py, utils.py
 
 configs/   campaign_d2d_perovskite.yaml (the live campaign) + two examples
-docs/      CAMPAIGN_STATUS.md, GP_MODEL_DECISION.md, D2D_CAMPAIGN_SPEC.md
+docs/      HANDOFF.md, CAMPAIGN_STATUS.md, GP_MODEL_DECISION.md,
+           D2D_CAMPAIGN_SPEC.md
 scripts/   diagnostics and report figures
 tests/     280 tests
 ```
