@@ -58,7 +58,7 @@ def _convergence_frame() -> pd.DataFrame:
 
 def _hyperparameter_frame() -> pd.DataFrame:
     rows = []
-    for variant_index, variant in enumerate(("default_current", "conservative")):
+    for variant_index, variant in enumerate(("dim_scaled_prior", "conservative")):
         for objective_index, objective in enumerate(("Uniformity", "Thickness")):
             for fold in range(2):
                 rows.append(
@@ -87,7 +87,7 @@ def _prediction_range_frame() -> pd.DataFrame:
     ranges = {"Uniformity": (0.1, 0.9), "Thickness": (-1.5, 1.2)}
     for objective_index, (objective, observed_range) in enumerate(ranges.items()):
         for candidate_index, candidate in enumerate(("C1", "C2")):
-            for model_index, model in enumerate(("default_current", "conservative")):
+            for model_index, model in enumerate(("dim_scaled_prior", "conservative")):
                 rows.append(
                     {
                         "candidate_id": candidate,
@@ -130,10 +130,10 @@ def _membership_frame() -> pd.DataFrame:
                 "REGION-010",
             ],
             "model_variant": [
-                "default_current",
-                "default_current",
-                "default_current",
-                "default_current",
+                "dim_scaled_prior",
+                "dim_scaled_prior",
+                "dim_scaled_prior",
+                "dim_scaled_prior",
                 "conservative",
             ],
             "bound_policy": ["clip_ucb", "clip_ucb", "none", "clip_ucb", "clip_ucb"],

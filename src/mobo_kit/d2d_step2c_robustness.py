@@ -58,7 +58,7 @@ from .discrete_refinement import (
 )
 from .model_validation import (
     CONSERVATIVE,
-    DEFAULT_CURRENT,
+    DIM_SCALED_PRIOR,
     ModelFitCache,
     ModelValidationResult,
     extract_model_hyperparameters,
@@ -1854,7 +1854,7 @@ def _run_observation_influence(
         config=config,
         mode_settings=mode_settings,
         training=training,
-        model_variant="default_current",
+        model_variant="dim_scaled_prior",
         beta=config.primary_beta,
         bound_policy=config.primary_bound_policy,
         penalty_label=config.primary_penalty_variant,
@@ -1932,7 +1932,7 @@ def _run_observation_influence(
             config=config,
             mode_settings=mode_settings,
             training=training,
-            model_variant="default_current",
+            model_variant="dim_scaled_prior",
             beta=config.primary_beta,
             bound_policy=config.primary_bound_policy,
             penalty_label=config.primary_penalty_variant,
@@ -2306,7 +2306,7 @@ def _boundary_plot_frame(enrichment: pd.DataFrame) -> pd.DataFrame:
 def _shortlist_prediction_plot_frame(shortlist: pd.DataFrame) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for _, candidate in shortlist.iterrows():
-        for variant_name in ("default_current", "conservative"):
+        for variant_name in ("dim_scaled_prior", "conservative"):
             for objective_name in D2D_OBJECTIVE_NAMES:
                 prefix = f"{variant_name}_{objective_name}"
                 rows.append(
@@ -3043,7 +3043,7 @@ def _run_d2d_step2c_robustness_resolved(
             control_sample_ids=config.control_sample_ids,
             cache=fit_cache,
         )
-        for variant in (DEFAULT_CURRENT, CONSERVATIVE)
+        for variant in (DIM_SCALED_PRIOR, CONSERVATIVE)
     ]
     validations_by_name = {result.variant.name: result for result in validation_results}
     models = {
@@ -3077,7 +3077,7 @@ def _run_d2d_step2c_robustness_resolved(
     largest_pool = primary_sobol.pools[largest_size]
     primary_mean, primary_std, primary_analytic, primary_moment_runtime = (
         _analytic_numpy_moments(
-            models["default_current"],
+            models["dim_scaled_prior"],
             largest_pool.X_norm,
             objective_transform=transform,
             chunk_size=config.score_chunk_size,
@@ -3105,7 +3105,7 @@ def _run_d2d_step2c_robustness_resolved(
         (config.primary_beta, config.primary_bound_policy)
     ]
     analytic_mc_frame, analytic_mc_payload = _analytic_mc_comparison(
-        model=models["default_current"],
+        model=models["dim_scaled_prior"],
         pool=largest_pool,
         training_y=training.Y_objectives,
         observed_norm=training.X_norm_all,
@@ -3121,7 +3121,7 @@ def _run_d2d_step2c_robustness_resolved(
         beta, bound_policy = key
         cached = CachedGridScorer(
             _grid_score_function(
-                models["default_current"],
+                models["dim_scaled_prior"],
                 config.design,
                 training.Y_objectives,
                 config,
@@ -3151,7 +3151,7 @@ def _run_d2d_step2c_robustness_resolved(
                 run_family="nested_pool_raw",
                 core_run=False,
                 selection=raw_selection,
-                model_variant="default_current",
+                model_variant="dim_scaled_prior",
                 pool=pool,
                 pool_hash=primary_sobol.prefix_hashes[size],
                 beta=config.primary_beta,
@@ -3174,7 +3174,7 @@ def _run_d2d_step2c_robustness_resolved(
                 config=config,
                 mode_settings=mode_settings,
                 training=training,
-                model_variant="default_current",
+                model_variant="dim_scaled_prior",
                 beta=config.primary_beta,
                 bound_policy=config.primary_bound_policy,
                 penalty_label=config.primary_penalty_variant,
@@ -3190,7 +3190,7 @@ def _run_d2d_step2c_robustness_resolved(
     for result in secondary_sobol:
         pool = result.largest_pool
         mean, std, _, moment_runtime = _analytic_numpy_moments(
-            models["default_current"],
+            models["dim_scaled_prior"],
             pool.X_norm,
             objective_transform=transform,
             chunk_size=config.score_chunk_size,
@@ -3206,7 +3206,7 @@ def _run_d2d_step2c_robustness_resolved(
         secondary_moment_runtime[str(result.scramble_seed)] = moment_runtime + runtime
         scorer = CachedGridScorer(
             _grid_score_function(
-                models["default_current"],
+                models["dim_scaled_prior"],
                 config.design,
                 training.Y_objectives,
                 config,
@@ -3228,7 +3228,7 @@ def _run_d2d_step2c_robustness_resolved(
                 config=config,
                 mode_settings=mode_settings,
                 training=training,
-                model_variant="default_current",
+                model_variant="dim_scaled_prior",
                 beta=config.primary_beta,
                 bound_policy=config.primary_bound_policy,
                 penalty_label=config.primary_penalty_variant,
@@ -3294,7 +3294,7 @@ def _run_d2d_step2c_robustness_resolved(
         config=config,
         mode_settings=mode_settings,
         training=training,
-        model_variant="default_current",
+        model_variant="dim_scaled_prior",
         beta=config.primary_beta,
         bound_policy="none",
         penalty_label=config.primary_penalty_variant,
@@ -3315,7 +3315,7 @@ def _run_d2d_step2c_robustness_resolved(
                 config=config,
                 mode_settings=mode_settings,
                 training=training,
-                model_variant="default_current",
+                model_variant="dim_scaled_prior",
                 beta=beta,
                 bound_policy=config.primary_bound_policy,
                 penalty_label=config.primary_penalty_variant,
@@ -3358,7 +3358,7 @@ def _run_d2d_step2c_robustness_resolved(
                 run_family="local_penalty",
                 core_run=penalty.label in penalty_core_labels,
                 selection=selection,
-                model_variant="default_current",
+                model_variant="dim_scaled_prior",
                 pool=converged_pool,
                 pool_hash=converged_pool_hash,
                 beta=config.primary_beta,
@@ -3460,7 +3460,7 @@ def _run_d2d_step2c_robustness_resolved(
     common_pool_hash = primary_sobol.prefix_hashes[influence_size]
     influence, influence_batches, influence_candidates, influence_predictions = (
         _run_observation_influence(
-            validation=validations_by_name["default_current"],
+            validation=validations_by_name["dim_scaled_prior"],
             common_pool=common_pool,
             common_pool_hash=common_pool_hash,
             full_pool_scores=baseline_scoring.base_score[:influence_size],
@@ -3476,7 +3476,7 @@ def _run_d2d_step2c_robustness_resolved(
         if batch.run_id.startswith("influence_omit_")
     }
     for sample_id in mode_settings.omitted_sample_ids:
-        fit = validations_by_name["default_current"].loocv.fold_records[sample_id]
+        fit = validations_by_name["dim_scaled_prior"].loocv.fold_records[sample_id]
         batch = influence_batch_by_id[int(sample_id)]
         influence_runtime_rows.append(
             {

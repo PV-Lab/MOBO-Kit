@@ -72,12 +72,12 @@ local_penalty_study:
 
 models:
   variants:
-    - {name: default_current, type: existing_default}
+    - {name: dim_scaled_prior, type: existing_default}
     - name: conservative
       type: explicit_conservative
       min_noise: 0.01
       min_lengthscale: 0.05
-  primary_for_debug: default_current
+  primary_for_debug: dim_scaled_prior
   exact_leave_one_out: true
   report_training_posterior_only_as_diagnostic: true
 

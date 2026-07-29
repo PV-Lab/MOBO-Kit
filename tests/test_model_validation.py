@@ -11,7 +11,9 @@ import mobo_kit.model_validation as validation_module
 import mobo_kit.models as models_module
 from mobo_kit.model_validation import (
     CONSERVATIVE,
-    DEFAULT_CURRENT,
+    DIM_SCALED_PRIOR,
+    LEGACY_NO_PRIOR,
+    PRIMARY_VARIANT,
     ModelFitCache,
     ModelFitError,
     ModelVariantSpec,
@@ -52,24 +54,88 @@ def _skip_optimization(mll: object) -> object:
 
 
 def test_model_variant_contracts_are_fixed() -> None:
-    assert model_variant_spec("default_current") is DEFAULT_CURRENT
-    assert DEFAULT_CURRENT.min_noise == pytest.approx(1.0e-3)
-    assert DEFAULT_CURRENT.min_lengthscale is None
+    assert model_variant_spec("dim_scaled_prior") is DIM_SCALED_PRIOR
+    assert DIM_SCALED_PRIOR.min_noise == pytest.approx(1.0e-4)
+    assert DIM_SCALED_PRIOR.min_lengthscale is None
+    assert DIM_SCALED_PRIOR.use_dim_scaled_prior is True
+    assert DIM_SCALED_PRIOR.use_lognormal_noise_prior is True
+    assert model_variant_spec("legacy_matern_no_prior") is LEGACY_NO_PRIOR
+    assert LEGACY_NO_PRIOR.use_dim_scaled_prior is False
+    assert LEGACY_NO_PRIOR.use_lognormal_noise_prior is False
     assert model_variant_spec("conservative") is CONSERVATIVE
     assert CONSERVATIVE.min_noise == pytest.approx(0.01)
     assert CONSERVATIVE.min_lengthscale == pytest.approx(0.05)
 
-    with pytest.raises(ValueError, match="default_current"):
-        ModelVariantSpec("default_current", min_noise=0.01, min_lengthscale=None)
+    with pytest.raises(ValueError, match="dim_scaled_prior"):
+        ModelVariantSpec("dim_scaled_prior", min_noise=0.01, min_lengthscale=None)
+    with pytest.raises(ValueError, match="dim_scaled_prior"):
+        # both priors are part of the contract, not options
+        ModelVariantSpec("dim_scaled_prior", min_noise=1.0e-4, min_lengthscale=None)
+    with pytest.raises(ValueError, match="dim_scaled_prior"):
+        # the lengthscale prior alone is the degenerate configuration
+        ModelVariantSpec(
+            "dim_scaled_prior",
+            min_noise=1.0e-4,
+            min_lengthscale=None,
+            use_dim_scaled_prior=True,
+        )
+    with pytest.raises(ValueError, match="legacy_matern_no_prior"):
+        ModelVariantSpec(
+            "legacy_matern_no_prior",
+            min_noise=1.0e-3,
+            min_lengthscale=None,
+            use_dim_scaled_prior=True,
+        )
     with pytest.raises(ValueError, match="conservative"):
         ModelVariantSpec("conservative", min_noise=0.01, min_lengthscale=0.01)
     with pytest.raises(ValueError, match="Unsupported"):
         model_variant_spec("mystery")
 
 
-def test_default_current_matches_step2b_model_construction(
+def test_primary_variant_is_the_prior_regularised_model() -> None:
+    """The fixed model is the default; the retired one must be asked for by name."""
+    assert PRIMARY_VARIANT is DIM_SCALED_PRIOR
+    assert PRIMARY_VARIANT.name == "dim_scaled_prior"
+
+
+def test_dim_scaled_prior_attaches_a_lengthscale_prior(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(validation_module, "fit_gpytorch_mll", _skip_optimization)
+    X, Y, sample_ids = _training_data()
+
+    primary = fit_model_variant(
+        X,
+        Y,
+        sample_ids=sample_ids,
+        objective_names=("one", "two"),
+        variant=DIM_SCALED_PRIOR,
+    )
+    legacy = fit_model_variant(
+        X,
+        Y,
+        sample_ids=sample_ids,
+        objective_names=("one", "two"),
+        variant=LEGACY_NO_PRIOR,
+    )
+
+    for gp in primary.model.models:
+        base = gp.covar_module.base_kernel
+        assert base.lengthscale_prior is not None
+        # LogNormal(loc = sqrt(2) + log(d)/2, scale = sqrt(3)); d = 2 here
+        assert float(base.lengthscale_prior.loc) == pytest.approx(
+            np.sqrt(2.0) + np.log(X.shape[1]) / 2.0
+        )
+    for gp in legacy.model.models:
+        assert not hasattr(gp.covar_module.base_kernel, "lengthscale_prior") or (
+            gp.covar_module.base_kernel.lengthscale_prior is None
+        )
+
+
+def test_legacy_variant_matches_step2b_model_construction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The retired contract must still reproduce archived Step 2B/2C runs exactly."""
     monkeypatch.setattr(validation_module, "fit_gpytorch_mll", _skip_optimization)
     monkeypatch.setattr(models_module, "fit_gpytorch_mll", _skip_optimization)
     X, Y, sample_ids = _training_data()
@@ -80,7 +146,7 @@ def test_default_current_matches_step2b_model_construction(
         Y,
         sample_ids=sample_ids,
         objective_names=("one", "two"),
-        variant=DEFAULT_CURRENT,
+        variant=LEGACY_NO_PRIOR,
         seed=73,
     )
     torch.manual_seed(73)
@@ -152,7 +218,7 @@ def test_lengthscale_flags_are_relative_to_normalized_domain(
         Y,
         sample_ids=sample_ids,
         objective_names=("one", "two"),
-        variant=DEFAULT_CURRENT,
+        variant=DIM_SCALED_PRIOR,
     )
     for gp in record.model.models:
         gp.covar_module.base_kernel.lengthscale = torch.tensor(
@@ -198,7 +264,7 @@ def test_fit_failure_is_structured_and_never_printed_or_retried(
             Y,
             sample_ids=sample_ids,
             objective_names=("one", "two"),
-            variant=DEFAULT_CURRENT,
+            variant=DIM_SCALED_PRIOR,
         )
 
     error = captured.value
@@ -234,7 +300,7 @@ def test_constructor_failure_retains_structured_warnings(
             Y,
             sample_ids=sample_ids,
             objective_names=("one", "two"),
-            variant=DEFAULT_CURRENT,
+            variant=DIM_SCALED_PRIOR,
         )
 
     assert captured.value.stage == "construct"
@@ -259,7 +325,7 @@ def test_successful_fit_warnings_are_structured(
         Y,
         sample_ids=sample_ids,
         objective_names=("one", "two"),
-        variant=DEFAULT_CURRENT,
+        variant=DIM_SCALED_PRIOR,
         fit_key="warning-test",
     )
 
@@ -290,7 +356,7 @@ def test_exact_loocv_retains_folds_uncertainty_roles_and_cache(
         Y,
         sample_ids=sample_ids,
         objective_names=("one", "two"),
-        variant=DEFAULT_CURRENT,
+        variant=DIM_SCALED_PRIOR,
         seed=19,
         row_roles=("control", "r0", "r0", "r0", "r0"),
         control_sample_ids=(1,),
@@ -302,7 +368,7 @@ def test_exact_loocv_retains_folds_uncertainty_roles_and_cache(
         Y,
         sample_ids=sample_ids,
         objective_names=("one", "two"),
-        variant=DEFAULT_CURRENT,
+        variant=DIM_SCALED_PRIOR,
         seed=19,
         row_roles=("control", "r0", "r0", "r0", "r0"),
         control_sample_ids=(1,),
@@ -336,7 +402,7 @@ def test_exact_loocv_retains_folds_uncertainty_roles_and_cache(
         Y,
         sample_ids=sample_ids,
         objective_names=("one", "two"),
-        variant=DEFAULT_CURRENT,
+        variant=DIM_SCALED_PRIOR,
         seed=20,
         cache=cache,
     )
@@ -417,3 +483,102 @@ def test_prediction_metrics_report_undefined_r_squared_and_validate_uncertainty(
 
     with pytest.raises(ValueError, match="strictly positive"):
         compute_prediction_metrics([0.0], [0.0], [0.0])
+
+
+def test_dim_scaled_prior_carries_the_lognormal_noise_prior() -> None:
+    """Regression guard for the outputscale-collapse mode.
+
+    With only the lengthscale prior, the marginal likelihood could drive the
+    outputscale to zero and explain the data as pure noise, leaving a latent
+    predictive sd near 1e-4 against a fitted noise near 0.93.  Measured on the
+    real campaign data that produced 68% coverage of 0.133 and mean NLPD 3.1e6
+    over the leave-one-out folds.  The noise prior is what rules it out.
+    """
+    X = torch.rand(12, 3, dtype=torch.double)
+    Y = torch.rand(12, 1, dtype=torch.double)
+    record = fit_model_variant(
+        X,
+        Y,
+        sample_ids=tuple(range(12)),
+        objective_names=("y",),
+        variant=DIM_SCALED_PRIOR,
+    )
+    for gp in record.model.models:
+        assert gp.likelihood.noise_covar.noise_prior is not None
+        assert float(gp.likelihood.noise_covar.noise_prior.loc) == pytest.approx(-4.0)
+        assert float(gp.likelihood.noise_covar.noise_prior.scale) == pytest.approx(1.0)
+        floor = gp.likelihood.noise_covar.raw_noise_constraint.lower_bound
+        assert float(floor) == pytest.approx(1.0e-4)
+
+    record.model.eval()
+    with torch.no_grad():
+        latent_sd = record.model.posterior(X).variance.sqrt()
+    # a collapsed outputscale shows up here as a latent sd orders of magnitude
+    # below the outcome scale
+    assert float(latent_sd.min()) > 1e-3
+
+
+def test_legacy_variant_keeps_its_bare_noise_floor() -> None:
+    """The retired contract must not silently inherit the new noise prior."""
+    X = torch.rand(12, 3, dtype=torch.double)
+    Y = torch.rand(12, 1, dtype=torch.double)
+    record = fit_model_variant(
+        X,
+        Y,
+        sample_ids=tuple(range(12)),
+        objective_names=("y",),
+        variant=LEGACY_NO_PRIOR,
+    )
+    for gp in record.model.models:
+        # a prior-free HomoskedasticNoise has no noise_prior attribute at all
+        assert getattr(gp.likelihood.noise_covar, "noise_prior", None) is None
+        floor = gp.likelihood.noise_covar.raw_noise_constraint.lower_bound
+        assert float(floor) == pytest.approx(1.0e-3)
+
+
+def test_signal_collapse_guard_fires_on_a_degenerate_fit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A numerical guard, not a naming guard.
+
+    Config-level naming cannot prevent a degenerate optimum: the same contract
+    refitted on new data can land there again. So the assertion runs on every
+    fit. Here the collapse is forced directly by zeroing the outputscale.
+    """
+    X = torch.rand(10, 2, dtype=torch.double)
+    Y = torch.rand(10, 1, dtype=torch.double)
+
+    real_fit = validation_module.fit_gpytorch_mll
+
+    def collapse_outputscale(mll):
+        real_fit(mll)
+        # emulate the observed failure: no signal, all noise
+        mll.model.covar_module.outputscale = torch.tensor(1e-12, dtype=torch.double)
+        mll.model.likelihood.noise = torch.tensor(0.9, dtype=torch.double)
+        return mll
+
+    monkeypatch.setattr(validation_module, "fit_gpytorch_mll", collapse_outputscale)
+    with pytest.raises(ModelFitError) as excinfo:
+        fit_model_variant(
+            X,
+            Y,
+            sample_ids=tuple(range(10)),
+            objective_names=("y",),
+            variant=DIM_SCALED_PRIOR,
+        )
+    assert excinfo.value.stage == "signal_collapse_guard"
+    assert isinstance(excinfo.value.cause, validation_module.SignalCollapseError)
+    assert "pure noise" in str(excinfo.value.cause)
+
+
+def test_signal_collapse_guard_passes_a_healthy_fit() -> None:
+    X = torch.rand(12, 3, dtype=torch.double)
+    Y = (X[:, :1] * 2.0 + 0.1 * torch.randn(12, 1, dtype=torch.double)).double()
+    record = fit_model_variant(
+        X,
+        Y,
+        sample_ids=tuple(range(12)),
+        objective_names=("y",),
+        variant=DIM_SCALED_PRIOR,
+    )
+    assert record.model is not None

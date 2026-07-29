@@ -38,7 +38,7 @@ to `[0, 1]`; it never clips training targets or the Optoelectronic score.
 
 Two explicit model variants are evaluated:
 
-- `default_current`, matching the Step 2B model;
+- `dim_scaled_prior`, matching the Step 2B model;
 - `conservative`, with documented observation-noise and ARD-lengthscale floors.
 
 Every fit is strict: failed optimization raises rather than silently returning

@@ -1214,7 +1214,7 @@ def _validate_manifest_provenance(
     model_variants = manifest["model_variants"]
     if not isinstance(model_variants, list) or {
         item.get("name") for item in model_variants if isinstance(item, Mapping)
-    } != {"default_current", "conservative"}:
+    } != {"dim_scaled_prior", "conservative"}:
         raise _error("run_manifest.json must record both GP model variants.")
     _validated_sha256(
         manifest["influence_common_pool_hash"], field="influence_common_pool_hash"

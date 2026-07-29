@@ -25,6 +25,10 @@ from botorch.fit import fit_gpytorch_mll
 from botorch.models import SingleTaskGP
 from botorch.models.model_list_gp_regression import ModelListGP
 from botorch.models.transforms.outcome import Standardize
+from botorch.models.utils.gpytorch_modules import (
+    get_covar_module_with_dim_scaled_prior,
+    get_gaussian_likelihood_with_lognormal_prior,
+)
 from gpytorch.constraints import GreaterThan
 from gpytorch.kernels import MaternKernel, ScaleKernel
 from gpytorch.likelihoods import GaussianLikelihood
@@ -33,9 +37,13 @@ from scipy.stats import spearmanr
 import torch
 
 
-DEFAULT_CURRENT_NAME = "default_current"
+DIM_SCALED_PRIOR_NAME = "dim_scaled_prior"
+LEGACY_NO_PRIOR_NAME = "legacy_matern_no_prior"
 CONSERVATIVE_NAME = "conservative"
-DEFAULT_CURRENT_MIN_NOISE = 1.0e-3
+#: BoTorch's MIN_INFERRED_NOISE_LEVEL, the floor that ships with its LogNormal
+#: noise prior.  The prior, not the floor, is what stops the variance collapse.
+DIM_SCALED_PRIOR_MIN_NOISE = 1.0e-4
+LEGACY_NO_PRIOR_MIN_NOISE = 1.0e-3
 CONSERVATIVE_MIN_NOISE = 0.01
 CONSERVATIVE_MIN_LENGTHSCALE = 0.05
 GAUSSIAN_95_Z = 1.959963984540054
@@ -64,17 +72,41 @@ def _seed(value: Any) -> int:
 
 @dataclass(frozen=True)
 class ModelVariantSpec:
-    """One explicit GP model contract used by Step 2C."""
+    """One explicit GP model contract.
+
+    ``use_dim_scaled_prior`` selects BoTorch's dimension-scaled LogNormal
+    lengthscale prior.  Without it, an unregularised ARD kernel fitted to 15
+    observations in 10 dimensions drives lengthscales to bimodal extremes
+    (measured: 0.13 to 3.8e4) and pins the likelihood noise at its floor, which
+    is interpolation rather than learning.
+
+    ``use_lognormal_noise_prior`` selects BoTorch's ``LogNormal(-4, 1)`` noise
+    prior.  It is required alongside the lengthscale prior, not optional: with a
+    bare noise floor the fit has a second degenerate mode in which the
+    outputscale collapses to zero and the model declares the data pure noise.
+    That mode was observed on 10 of 15 leave-one-out folds of the thickness
+    score, producing a latent predictive sd of 1e-4 against a fitted noise of
+    0.93, 68% interval coverage of 0.133, and a mean NLPD of 3.1e6.
+
+    See docs/GP_MODEL_DECISION.md.
+    """
 
     name: str
     min_noise: float
     min_lengthscale: float | None
     kernel_name: str = "matern_2.5_ard"
+    use_dim_scaled_prior: bool = False
+    use_lognormal_noise_prior: bool = False
 
     def __post_init__(self) -> None:
-        if self.name not in {DEFAULT_CURRENT_NAME, CONSERVATIVE_NAME}:
+        if self.name not in {
+            DIM_SCALED_PRIOR_NAME,
+            LEGACY_NO_PRIOR_NAME,
+            CONSERVATIVE_NAME,
+        }:
             raise ValueError(
-                "Model variant name must be 'default_current' or 'conservative'."
+                "Model variant name must be 'dim_scaled_prior', "
+                "'legacy_matern_no_prior' or 'conservative'."
             )
         noise = _finite_positive(self.min_noise, field_name="min_noise")
         lengthscale = (
@@ -84,27 +116,56 @@ class ModelVariantSpec:
         )
         if self.kernel_name != "matern_2.5_ard":
             raise ValueError("Only the audited matern_2.5_ard kernel is supported.")
-        if self.name == DEFAULT_CURRENT_NAME and (
-            noise != DEFAULT_CURRENT_MIN_NOISE or lengthscale is not None
+        if self.name == DIM_SCALED_PRIOR_NAME and (
+            noise != DIM_SCALED_PRIOR_MIN_NOISE
+            or lengthscale is not None
+            or not self.use_dim_scaled_prior
+            or not self.use_lognormal_noise_prior
         ):
             raise ValueError(
-                "default_current must preserve the Step 2B noise floor of 1e-3 "
-                "and must not add a lengthscale floor."
+                "dim_scaled_prior must use min_noise=1e-4, no lengthscale floor, "
+                "and BOTH the dimension-scaled lengthscale prior and the "
+                "LogNormal noise prior."
+            )
+        if self.name == LEGACY_NO_PRIOR_NAME and (
+            noise != LEGACY_NO_PRIOR_MIN_NOISE
+            or lengthscale is not None
+            or self.use_dim_scaled_prior
+            or self.use_lognormal_noise_prior
+        ):
+            raise ValueError(
+                "legacy_matern_no_prior must preserve the retired Step 2B contract: "
+                "min_noise=1e-3, no lengthscale floor, and no priors."
             )
         if self.name == CONSERVATIVE_NAME and (
             noise != CONSERVATIVE_MIN_NOISE
             or lengthscale != CONSERVATIVE_MIN_LENGTHSCALE
+            or self.use_dim_scaled_prior
+            or self.use_lognormal_noise_prior
         ):
             raise ValueError(
-                "conservative must use min_noise=0.01 and min_lengthscale=0.05."
+                "conservative must use min_noise=0.01, min_lengthscale=0.05 and "
+                "no priors."
             )
         object.__setattr__(self, "min_noise", noise)
         object.__setattr__(self, "min_lengthscale", lengthscale)
 
 
-DEFAULT_CURRENT = ModelVariantSpec(
-    DEFAULT_CURRENT_NAME,
-    min_noise=DEFAULT_CURRENT_MIN_NOISE,
+#: The campaign default.  Matern 2.5 ARD with BoTorch's dimension-scaled
+#: LogNormal lengthscale prior and its LogNormal(-4, 1) noise prior.  Both are
+#: required; see ModelVariantSpec for what happens with only the former.
+DIM_SCALED_PRIOR = ModelVariantSpec(
+    DIM_SCALED_PRIOR_NAME,
+    min_noise=DIM_SCALED_PRIOR_MIN_NOISE,
+    min_lengthscale=None,
+    use_dim_scaled_prior=True,
+    use_lognormal_noise_prior=True,
+)
+#: Retired.  The prior-free contract used through Step 2C, kept only so archived
+#: runs remain reproducible and interpretable.  Do not select for new work.
+LEGACY_NO_PRIOR = ModelVariantSpec(
+    LEGACY_NO_PRIOR_NAME,
+    min_noise=LEGACY_NO_PRIOR_MIN_NOISE,
     min_lengthscale=None,
 )
 CONSERVATIVE = ModelVariantSpec(
@@ -113,11 +174,16 @@ CONSERVATIVE = ModelVariantSpec(
     min_lengthscale=CONSERVATIVE_MIN_LENGTHSCALE,
 )
 
+#: What new runs get unless a caller deliberately asks for something else.
+PRIMARY_VARIANT = DIM_SCALED_PRIOR
+
 
 def model_variant_spec(name: str) -> ModelVariantSpec:
-    """Return one of the two fixed Step 2C model contracts."""
-    if name == DEFAULT_CURRENT_NAME:
-        return DEFAULT_CURRENT
+    """Return one of the fixed model contracts by name."""
+    if name == DIM_SCALED_PRIOR_NAME:
+        return DIM_SCALED_PRIOR
+    if name == LEGACY_NO_PRIOR_NAME:
+        return LEGACY_NO_PRIOR
     if name == CONSERVATIVE_NAME:
         return CONSERVATIVE
     raise ValueError(f"Unsupported model variant {name!r}.")
@@ -440,32 +506,115 @@ def _warning_rows(
     ]
 
 
+class SignalCollapseError(RuntimeError):
+    """The fitted outputscale went to zero; the model has no signal component."""
+
+
+#: A fit whose latent (signal) sd falls below this multiple of the fitted noise
+#: sd has explained the data as pure noise.  Acquisition reads the latent
+#: posterior, so such a model produces a near-deterministic score surface and a
+#: meaningless exploration term, even though its predictive intervals look fine
+#: because the inflated noise hides the collapse.
+MINIMUM_LATENT_TO_NOISE_SD_RATIO = 1.0e-2
+
+
+def _assert_signal_not_collapsed(
+    gp: SingleTaskGP,
+    X: torch.Tensor,
+    *,
+    variant: ModelVariantSpec,
+    objective_index: int,
+    objective_name: str,
+    fit_key: str,
+    omitted_sample_id: Hashable | None,
+    fit_warnings: Sequence[ModelFitWarning],
+) -> None:
+    """Fail loudly when the outputscale has collapsed to zero.
+
+    This is a numerical guard, not a configuration check.  Naming a variant
+    correctly cannot prevent a degenerate optimum: the same contract refitted on
+    different data -- more observations, replicate-derived ``train_Yvar``, a new
+    round -- can land there again.  So the assertion runs on every fit.
+
+    Observed instance: 10 of 15 leave-one-out folds of the thickness score fitted
+    a noise of 0.93 against a latent sd of 1e-4, a ratio of ~1e-4.
+    """
+    with torch.no_grad():
+        latent_sd = float(gp.posterior(X).variance.clamp_min(0.0).sqrt().min())
+        noise_sd = float(gp.likelihood.noise.detach().reshape(-1)[0] ** 0.5)
+    if noise_sd <= 0.0:
+        return
+    ratio = latent_sd / noise_sd
+    if ratio < MINIMUM_LATENT_TO_NOISE_SD_RATIO:
+        raise ModelFitError(
+            variant_name=variant.name,
+            fit_key=fit_key,
+            omitted_sample_id=omitted_sample_id,
+            objective_index=objective_index,
+            objective_name=objective_name,
+            stage="signal_collapse_guard",
+            cause=SignalCollapseError(
+                f"minimum latent sd {latent_sd:.3e} is {ratio:.3e} of the fitted "
+                f"noise sd {noise_sd:.3e}, below the "
+                f"{MINIMUM_LATENT_TO_NOISE_SD_RATIO:g} floor. The model has "
+                "explained the data as pure noise: its posterior mean is "
+                "effectively constant and its acquisition scores are meaningless. "
+                "Predictive intervals do NOT reveal this, because the inflated "
+                "noise masks the collapse."
+            ),
+            fit_warnings=tuple(fit_warnings),
+        )
+
+
 def _build_single_task_gp(
     X: torch.Tensor,
     y: torch.Tensor,
     variant: ModelVariantSpec,
+    mean_module: Any = None,
 ) -> SingleTaskGP:
-    lengthscale_constraint = (
-        None
-        if variant.min_lengthscale is None
-        else GreaterThan(variant.min_lengthscale)
-    )
-    kernel_kwargs: dict[str, Any] = {
-        "nu": 2.5,
-        "ard_num_dims": X.shape[1],
-    }
-    if lengthscale_constraint is not None:
-        kernel_kwargs["lengthscale_constraint"] = lengthscale_constraint
-    base_kernel = MaternKernel(**kernel_kwargs)
+    if variant.use_dim_scaled_prior:
+        # BoTorch's dimension-scaled LogNormal lengthscale prior, the same one
+        # SingleTaskGP applies by default when no covar_module is supplied.  We
+        # still pass an explicit module so the ScaleKernel wrapper (which the
+        # hyperparameter readout and plots depend on) stays in place.
+        base_kernel = get_covar_module_with_dim_scaled_prior(
+            ard_num_dims=X.shape[1],
+            use_rbf_kernel=False,
+        )
+    else:
+        lengthscale_constraint = (
+            None
+            if variant.min_lengthscale is None
+            else GreaterThan(variant.min_lengthscale)
+        )
+        kernel_kwargs: dict[str, Any] = {
+            "nu": 2.5,
+            "ard_num_dims": X.shape[1],
+        }
+        if lengthscale_constraint is not None:
+            kernel_kwargs["lengthscale_constraint"] = lengthscale_constraint
+        base_kernel = MaternKernel(**kernel_kwargs)
     covar_module = ScaleKernel(base_kernel)
-    likelihood = GaussianLikelihood(noise_constraint=GreaterThan(variant.min_noise))
-    return SingleTaskGP(
+    if variant.use_lognormal_noise_prior:
+        # LogNormal(-4, 1) with a GreaterThan(1e-4) floor.  Without the prior the
+        # marginal likelihood is free to drive the outputscale to zero and call
+        # the data pure noise, which yields a degenerate near-zero latent
+        # variance.  The floor alone does not prevent that.
+        likelihood = get_gaussian_likelihood_with_lognormal_prior()
+    else:
+        likelihood = GaussianLikelihood(noise_constraint=GreaterThan(variant.min_noise))
+    model = SingleTaskGP(
         X,
         y,
         covar_module=covar_module,
         likelihood=likelihood,
         outcome_transform=Standardize(m=1),
     )
+    if mean_module is not None:
+        # a frozen structured mean: its coefficients are registered as buffers,
+        # so the marginal likelihood still fits only the GP hyperparameters
+        model.mean_module = mean_module
+    return model
 
 
 def fit_model_variant(
@@ -480,6 +629,7 @@ def fit_model_variant(
     omitted_sample_id: Hashable | None = None,
     cohort_fingerprint: str | None = None,
     cache: ModelFitCache | None = None,
+    mean_module: Any = None,
 ) -> FittedModelRecord:
     """Fit one strict independent GP per objective and return an audit record."""
     ids, names = _validate_dataset(X, Y, sample_ids, objective_names, minimum_rows=2)
@@ -493,6 +643,15 @@ def fit_model_variant(
     cohort_hash = training_hash if cohort_fingerprint is None else cohort_fingerprint
     if not isinstance(cohort_hash, str) or not cohort_hash.strip():
         raise ValueError("cohort_fingerprint must be None or a non-empty string.")
+    if mean_module is not None and cache is not None:
+        # the cache key is built from the data and the variant, not the mean
+        # module, so a cached fit could be returned for a different trend.
+        # Refuse rather than silently serve the wrong model.
+        raise ValueError(
+            "A structured mean_module cannot be combined with a ModelFitCache: "
+            "the cache key does not capture the mean, so a fold could be served "
+            "a fit built from a different trend."
+        )
     cache_key = ModelFitCacheKey(
         variant_name=variant.name,
         cohort_fingerprint=cohort_hash,
@@ -523,7 +682,10 @@ def fit_model_variant(
             with warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter("always")
                 gp = _build_single_task_gp(
-                    X, Y[:, objective_index : objective_index + 1], variant
+                    X,
+                    Y[:, objective_index : objective_index + 1],
+                    variant,
+                    mean_module=mean_module,
                 )
             fit_warning_rows.extend(
                 _warning_rows(
@@ -599,6 +761,16 @@ def fit_model_variant(
             ) from exc
         gp.eval()
         gp.likelihood.eval()
+        _assert_signal_not_collapsed(
+            gp,
+            X,
+            variant=variant,
+            objective_index=objective_index,
+            objective_name=objective_name,
+            fit_key=fit_key,
+            omitted_sample_id=omitted_sample_id,
+            fit_warnings=fit_warning_rows,
+        )
         models.append(gp)
 
     record = FittedModelRecord(
@@ -987,7 +1159,11 @@ def validate_model_variant(
 
 __all__ = [
     "CONSERVATIVE",
-    "DEFAULT_CURRENT",
+    "MINIMUM_LATENT_TO_NOISE_SD_RATIO",
+    "SignalCollapseError",
+    "DIM_SCALED_PRIOR",
+    "LEGACY_NO_PRIOR",
+    "PRIMARY_VARIANT",
     "ExactLOOCVResult",
     "FittedModelRecord",
     "HyperparameterRecord",

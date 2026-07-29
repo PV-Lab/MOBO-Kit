@@ -56,11 +56,12 @@ def test_canonical_d2d_yaml_has_exact_input_contract():
     config = _load_canonical_config()
     design = build_design_from_config(config)
 
-    assert config["campaign"] == {
-        "name": "D2D_FA0.9Cs0.1PbI3",
-        "status": "baseline_only",
-    }
-    assert config["objectives"]["names"] == []
+    assert config["campaign"]["name"] == "D2D_FA0.9Cs0.1PbI3"
+    # the config is no longer a baseline-only stub; it now carries a resolved
+    # objective contract and can propose candidates
+    assert config["campaign"]["status"] == "active"
+    assert config["objectives"]["contract_version"]
+    assert len(config["objectives"]["specs"]) == 3
     assert config["constraints"] == []
     assert design.names == [item[0] for item in EXPECTED_INPUTS]
     assert design.units == [item[1] for item in EXPECTED_INPUTS]

@@ -38,6 +38,11 @@ class ObjectiveSpec:
     name: str
     goal: Goal
     transform: TransformName
+    #: What the MODEL emits, relative to the physical quantity the utility is
+    #: defined on.  ``log`` means the GP was fitted in log space (see
+    #: ``structured_mean``), so a model output must be exponentiated before the
+    #: utility applies, and a model *posterior* is lognormal rather than normal.
+    model_link: Literal["identity", "log"] = "identity"
     source_column: str | None = None
     lower_anchor: float | None = None
     upper_anchor: float | None = None
@@ -183,7 +188,26 @@ class ObjectiveTransform:
             raise ValueError("Y must contain only finite values.")
         outputs: list[torch.Tensor] = []
         for index, spec in enumerate(self.specs):
-            raw = Y[..., index]
+            outputs.append(self._utility(Y[..., index], spec))
+        transformed = torch.stack(outputs, dim=-1)
+        if transformed.shape != Y.shape:
+            raise RuntimeError("Internal objective transform shape error.")
+        return transformed
+
+    def _utility(self, model_output: torch.Tensor, spec: ObjectiveSpec):
+        """Utility for one objective, given that objective's MODEL output.
+
+        The link decode happens exactly here and nowhere else.  Quadrature and
+        Monte-Carlo paths must both route through this, or one of them will
+        exponentiate twice.
+        """
+        raw = torch.exp(model_output) if spec.model_link == "log" else model_output
+        return self._utility_from_physical(raw, spec)
+
+    @staticmethod
+    def _utility_from_physical(raw: torch.Tensor, spec: ObjectiveSpec):
+        """Utility for one objective from its PHYSICAL value (link already undone)."""
+        if True:
             if spec.transform == "identity":
                 utility = raw
             elif spec.transform == "affine":
@@ -203,13 +227,164 @@ class ObjectiveTransform:
                 target = raw.new_tensor(spec.target)
                 scale = raw.new_tensor(spec.scale)
                 utility = -(raw - target).abs() / scale
-            outputs.append(utility)
-        transformed = torch.stack(outputs, dim=-1)
-        if transformed.shape != Y.shape:
-            raise RuntimeError("Internal objective transform shape error.")
-        return transformed
+            return utility
 
     __call__ = transform
+
+    def expected_transform(
+        self, mean: torch.Tensor, variance: torch.Tensor
+    ) -> torch.Tensor:
+        """Expected utility ``E[transform(Y)]`` for ``Y ~ N(mean, variance)``.
+
+        Use this when the GP is trained on a *raw* measurement and the utility is
+        a nonlinear function of it.  Applying :meth:`transform` to the posterior
+        mean is wrong in that case: it is biased by Jensen's inequality and it
+        discards the posterior variance entirely, which for a target-seeking
+        utility is precisely the information that matters.
+
+        ``identity`` and ``affine`` are linear, so their expectation is just the
+        transform of the mean.  The two target transforms are nonlinear and have
+        exact closed forms:
+
+        * ``gaussian_target`` with target ``c`` and width ``s``::
+
+              E = s / sqrt(s^2 + v) * exp(-0.5 * (mu - c)^2 / (s^2 + v))
+
+          At ``mu == c`` this decays from 1 as the posterior widens, so a
+          confidently on-target candidate outranks an uncertain one.
+
+        * ``negative_absolute_target`` uses the folded-normal mean.
+
+        Both reduce to :meth:`transform` as ``variance -> 0``.
+        """
+        if not isinstance(mean, torch.Tensor) or not isinstance(variance, torch.Tensor):
+            raise TypeError("mean and variance must be torch.Tensors.")
+        if not mean.is_floating_point() or not variance.is_floating_point():
+            raise TypeError("mean and variance must use a floating dtype.")
+        if mean.shape != variance.shape:
+            raise ValueError(
+                f"mean and variance must share a shape; got {tuple(mean.shape)} "
+                f"and {tuple(variance.shape)}."
+            )
+        if mean.ndim < 1 or mean.shape[-1] != self.objective_count:
+            raise ValueError(
+                f"mean final dimension must be {self.objective_count}; "
+                f"got shape {tuple(mean.shape)}."
+            )
+        if not torch.isfinite(mean).all() or not torch.isfinite(variance).all():
+            raise ValueError("mean and variance must contain only finite values.")
+        if (variance < 0).any():
+            raise ValueError("variance must be non-negative.")
+
+        outputs: list[torch.Tensor] = []
+        for index, spec in enumerate(self.specs):
+            mu = mean[..., index]
+            var = variance[..., index]
+            if spec.model_link == "log":
+                # the posterior is lognormal, so no Gaussian closed form applies;
+                # integrate in log space by quadrature
+                utility = self._quadrature_expectation(mu, var, spec, nodes=20)
+            elif spec.transform in {"identity", "affine"}:
+                # linear in the physical value, and the link is identity in this
+                # branch, so E[f(Y)] = f(E[Y])
+                utility = self._utility_from_physical(mu, spec)
+            elif spec.transform == "gaussian_target":
+                target = mu.new_tensor(spec.target)
+                s2 = mu.new_tensor(spec.sigma) ** 2
+                denom = s2 + var
+                utility = torch.sqrt(s2 / denom) * torch.exp(
+                    -0.5 * (mu - target).square() / denom
+                )
+            else:
+                target = mu.new_tensor(spec.target)
+                scale = mu.new_tensor(spec.scale)
+                sd = var.clamp_min(0.0).sqrt()
+                delta = mu - target
+                # folded-normal mean; the sd == 0 branch degenerates to |delta|
+                safe_sd = torch.where(sd > 0, sd, torch.ones_like(sd))
+                folded = safe_sd * np.sqrt(2.0 / np.pi) * torch.exp(
+                    -0.5 * (delta / safe_sd).square()
+                ) + delta * torch.erf(delta / (safe_sd * np.sqrt(2.0)))
+                folded = torch.where(sd > 0, folded, delta.abs())
+                utility = -folded / scale
+            outputs.append(utility)
+        expected = torch.stack(outputs, dim=-1)
+        if expected.shape != mean.shape:
+            raise RuntimeError("Internal expected-objective shape error.")
+        return expected
+
+    def _quadrature_expectation(
+        self,
+        log_mean: torch.Tensor,
+        log_variance: torch.Tensor,
+        spec: ObjectiveSpec,
+        *,
+        nodes: int,
+    ) -> torch.Tensor:
+        """E[utility] for one log-link objective, by Gauss-Hermite in log space.
+
+            E[g(Y)] = int g(exp(z)) N(z; m, s^2) dz
+                    ~ (1/sqrt(pi)) sum_i w_i g(exp(m + sqrt(2) s x_i))
+
+        Exact for the Gaussian weight, deterministic, differentiable, and
+        cheaper than sampling.  Moment-matching the lognormal to a Gaussian and
+        reusing the closed form is ~500x less accurate here, and its bias
+        changes sign across the range, which reorders candidates rather than
+        merely shifting them.
+        """
+        raw_nodes, raw_weights = np.polynomial.hermite.hermgauss(nodes)
+        abscissa = log_mean.new_tensor(raw_nodes)
+        weights = log_mean.new_tensor(raw_weights) / float(np.sqrt(np.pi))
+        sd = log_variance.clamp_min(0.0).sqrt()
+        shape = (-1, *([1] * log_mean.ndim))
+        shifted = log_mean.unsqueeze(0) + np.sqrt(2.0) * sd.unsqueeze(
+            0
+        ) * abscissa.view(shape)
+        utilities = self._utility_from_physical(torch.exp(shifted), spec)
+        return (utilities * weights.view(shape)).sum(dim=0)
+
+    def expected_transform_lognormal(
+        self,
+        log_mean: torch.Tensor,
+        log_variance: torch.Tensor,
+        *,
+        nodes: int = 20,
+    ) -> torch.Tensor:
+        """Expected utility treating EVERY objective as log-link.
+
+        Prefer :meth:`expected_transform`, which dispatches per objective from
+        each spec's ``model_link``.  This method is kept for the single-objective
+        case where the caller knows the posterior is lognormal.
+        """
+        if not isinstance(log_mean, torch.Tensor) or not isinstance(
+            log_variance, torch.Tensor
+        ):
+            raise TypeError("log_mean and log_variance must be torch.Tensors.")
+        if not log_mean.is_floating_point() or not log_variance.is_floating_point():
+            raise TypeError("log_mean and log_variance must use a floating dtype.")
+        if log_mean.shape != log_variance.shape:
+            raise ValueError(
+                f"log_mean and log_variance must share a shape; got "
+                f"{tuple(log_mean.shape)} and {tuple(log_variance.shape)}."
+            )
+        if log_mean.ndim < 1 or log_mean.shape[-1] != self.objective_count:
+            raise ValueError(
+                f"log_mean final dimension must be {self.objective_count}; "
+                f"got shape {tuple(log_mean.shape)}."
+            )
+        if not torch.isfinite(log_mean).all() or not torch.isfinite(log_variance).all():
+            raise ValueError("log_mean and log_variance must be finite.")
+        if (log_variance < 0).any():
+            raise ValueError("log_variance must be non-negative.")
+        if isinstance(nodes, bool) or not isinstance(nodes, int) or nodes < 2:
+            raise ValueError("nodes must be an integer of at least 2.")
+        columns = [
+            self._quadrature_expectation(
+                log_mean[..., index], log_variance[..., index], spec, nodes=nodes
+            )
+            for index, spec in enumerate(self.specs)
+        ]
+        return torch.stack(columns, dim=-1)
 
 
 class ConfiguredMCMultiOutputObjective(MCMultiOutputObjective):

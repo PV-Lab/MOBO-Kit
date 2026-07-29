@@ -401,7 +401,7 @@ def _build_bundle(
             )
         ],
         model_variants=[
-            {"name": "default_current"},
+            {"name": "dim_scaled_prior"},
             {"name": "conservative"},
         ],
         influence_common_pool_hash="D" * 64,

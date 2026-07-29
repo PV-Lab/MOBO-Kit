@@ -73,7 +73,7 @@ def generate_initial_experiments(
     set_seeds(seed)
 
     # Load configuration
-    with open(config_path, "r") as f:
+    with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
     # Build design space through the validated config-to-design path.
@@ -241,7 +241,7 @@ def run_mobo_experiment(
     if config_path is not None:
         if not os.path.isfile(config_path):
             raise FileNotFoundError(f"Configuration file not found: {config_path}")
-        with open(config_path, "r") as f:
+        with open(config_path, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
         if propose_candidates:
             # This executes before campaign CSV parsing, model fitting, or any

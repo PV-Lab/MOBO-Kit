@@ -701,7 +701,7 @@ def load_step2c_config(path: str | Path) -> ResolvedStep2CConfig:
 
     models = _mapping(raw.get("models"), field="models")
     expected_models = [
-        {"name": "default_current", "type": "existing_default"},
+        {"name": "dim_scaled_prior", "type": "existing_default"},
         {
             "name": "conservative",
             "type": "explicit_conservative",
@@ -714,7 +714,7 @@ def load_step2c_config(path: str | Path) -> ResolvedStep2CConfig:
             "models.variants must preserve default and conservative settings."
         )
     if (
-        models.get("primary_for_debug") != "default_current"
+        models.get("primary_for_debug") != "dim_scaled_prior"
         or models.get("exact_leave_one_out") is not True
         or models.get("report_training_posterior_only_as_diagnostic") is not True
     ):
@@ -878,8 +878,8 @@ def load_step2c_config(path: str | Path) -> ResolvedStep2CConfig:
         refinement_tolerance=tolerance,
         penalty_variants=penalties,
         primary_penalty_variant=primary_penalty,
-        model_variant_names=("default_current", "conservative"),
-        primary_model_variant="default_current",
+        model_variant_names=("dim_scaled_prior", "conservative"),
+        primary_model_variant="dim_scaled_prior",
         influence_pool_size=influence_pool_size,
         influence_pool_seed=influence_pool_seed,
         influence_sample_ids=influence_ids,

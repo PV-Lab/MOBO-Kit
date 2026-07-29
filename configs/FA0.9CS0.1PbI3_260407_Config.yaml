@@ -1,11 +1,19 @@
-# Canonical D2D input grid for Step 1 infrastructure tests.
+# D2D campaign configuration - FA0.9Cs0.1PbI3 slot-die/spin campaign.
 #
-# Objective formulas, control policy, process constraints, and campaign reference
-# point are intentionally unresolved. This file must not be used to generate R1/R2
-# candidates until those scientific decisions are approved and recorded.
+# Rounds: R0 LHS (15, complete) -> R1 UCB-HVI (5 conditions) -> R2 qLogNEHVI (3).
+# Each proposed condition is run in triplicate; the three films share a
+# replicate_group and are aggregated to one condition-level observation before
+# the next round trains on them.
+#
+# Objective rationale and the measurements behind it are in
+# docs/GP_MODEL_DECISION.md. The short version: thickness trains on raw
+# nanometres and the 650 nm Gaussian is applied to the posterior, because the
+# score itself is a 2-to-1 folded transform that destroys learnable signal.
 campaign:
   name: D2D_FA0.9Cs0.1PbI3
-  status: baseline_only
+  status: active
+  schema_version: d2d-campaign-v2
+  workbook_profile: d2d_summary_v3_scores
 
 inputs:
   - name: speed_1
@@ -59,10 +67,127 @@ inputs:
     stop: 25
     step: 2
 
+# All three utilities are maximised after transformation. `model_source_column`
+# is what the GP TRAINS on; `transform` maps a model output to utility. The two
+# differ only for thickness.
 objectives:
-  # TBD - experimental-team decision. Empty by design in Step 1.
-  names: []
+  contract_version: d2d-objectives-v2-nm-thickness
+  # Scales are FIXED for the whole campaign and must never be re-derived from
+  # observed data. If a scale tracks the data, utility space moves between
+  # rounds and hypervolume stops being comparable - the progress plot silently
+  # becomes meaningless. Widen a range deliberately and bump contract_version;
+  # never let it follow the measurements.
+  scaling_mode: fixed_affine
+  specs:
+  - name: uniformity
+    model_source_column: "Uniformity score"        # workbook Z = L*N*O
+    transform: affine
+    goal: maximize
+    # fixed campaign scale, NOT recomputed per round; hypervolume would
+    # otherwise be incomparable between rounds
+    lower_anchor: 0.0
+    upper_anchor: 1.0
+    # No learnable signal from the 15 R0 points (permutation p = 0.82).
+    # R1 is exploration-dominated for this objective by design.
+    signal_status: exploration_only
 
-# No D2D process constraint has been approved. In particular, the legacy
-# humidity/temperature Clausius-Clapeyron constraint does not apply here.
+  - name: optoelectronic
+    model_source_column: "Optoelectronic score"    # workbook AA = LOG10(P*Q)
+    transform: affine
+    goal: maximize
+    # log10(photoconductance x implied Voc); observed R0 span -9.14 to -7.27
+    lower_anchor: -10.0
+    upper_anchor: -6.0
+    signal_status: learnable
+    # A single linear term on anneal_temp and nothing else. Six forms were
+    # tested; every addition made it worse, and an Arrhenius 1/T form bought
+    # nothing over plain linear temperature (+0.226 vs +0.244). anneal_temp is
+    # also the least search-contaminated choice: it came from a marginal
+    # correlation already on record (rho = -0.651, p = 0.009), not from the
+    # search over mean shapes -- and it happens to win anyway.
+    # Plain GP -0.342 (worse than the -0.148 null) -> structured +0.355.
+    mean_function:
+      response: identity
+      features:
+        - column: anneal_temp
+          transform: identity
+
+  - name: thickness
+    # trains on nanometres, NOT on the workbook thickness score
+    model_source_column: "Thickness (avg)"         # workbook X, nm
+    transform: gaussian_target
+    goal: target
+    target: 650.0
+    # the workbook writes EXP(-(((T-650)/250)^2)), which has no factor of 1/2;
+    # in the exp(-0.5*((T-c)/sigma)^2) convention used here that is 250/sqrt(2)
+    sigma: 176.7766952966369
+    equivalent_workbook_formula: "EXP(-(((X-650)/250)^2))"
+    signal_status: learnable
+    # Spin-coating theory gives T ~ omega^-0.5; the measured exponent is -0.38.
+    # NOTE the opposite pattern to optoelectronic: neither term alone is worth
+    # much here (+0.159, +0.187), the PAIR carries the signal. Do not assume
+    # either shape generalises to a new objective.
+    # Plain GP +0.183 -> structured +0.384.
+    # response: log makes the model output lognormal, so the utility
+    # expectation must use Gauss-Hermite quadrature, not the Gaussian closed
+    # form -- moment-matching there is 506x less accurate and its bias changes
+    # sign across the range, which reorders candidates.
+    mean_function:
+      response: log
+      features:
+        - column: speed_1
+          transform: log
+        - column: precur_conc
+          transform: log
+
+# Reference point in UTILITY space, after the transforms above. Every objective
+# is on a comparable [0, 1]-ish scale there, so no axis silently dominates the
+# hypervolume. On the previous raw-scale reference [-0.01, -10.0, -0.01] the
+# optoelectronic axis was 4.01x the uniformity axis.
+reference_point_utility: [-0.01, -0.01, -0.01]
+
+rounds:
+  r1:
+    method: ucb_hvi
+    batch_size: 5
+    replicates_per_condition: 3
+    beta: 4.0
+    candidate_pool_size: 32768
+    posterior_samples: 256
+    # thickness utility is a nonlinear function of the model output, so utility
+    # moments must come from posterior samples, not from moments of the mean
+    moment_method: monte_carlo
+  r2:
+    method: qlognehvi
+    batch_size: 3
+    replicates_per_condition: 3
+    candidate_pool_size: 32768
+    mc_samples: 128
+    sequential_pending: true
+
+local_penalization:
+  distance_metric: normalized_euclidean
+  dimension_weights: null
+  radius: 0.25
+  min_batch_distance: 0.15
+  min_observed_distance: 0.0
+
+model:
+  variant: dim_scaled_prior
+  # R0 has no replicates. Once R1 triplicates land, pool their within-condition
+  # variance (5 conditions x 2 dof = 10 dof) and pass it as train_Yvar. Pool
+  # thickness variance in NANOMETRES, matching what the GP trains on. Applying
+  # an R1-derived estimate to the R0 rows assumes the measurement process is
+  # unchanged between rounds; that assumption is recorded here deliberately
+  # rather than left implicit.
+  observation_noise: fit_from_marginal_likelihood
+
+reproducibility:
+  seed: 73
+  record_git_commit: true
+  record_environment_versions: true
+  record_resolved_config_hash: true
+
+# No process constraint applies to this campaign. The legacy humidity/temperature
+# Clausius-Clapeyron constraint is for a different design.
 constraints: []

@@ -54,7 +54,7 @@ def _study_batch(
         X_norm=normalized,
         base_scores=scores,
         penalized_scores=scores * penalty_factor,
-        model_variant="default_current",
+        model_variant="dim_scaled_prior",
         pool_seed=73,
         pool_size=32,
         pool_hash="A" * 64,
@@ -125,7 +125,7 @@ def test_boundary_enrichment_separates_lower_and_upper_endpoints() -> None:
 def test_candidate_model_summary_counts_declared_support_extrapolation() -> None:
     summary = pd.DataFrame(
         {
-            "variant_name": ["default_current"] * 3,
+            "variant_name": ["dim_scaled_prior"] * 3,
             "objective_index": [0, 1, 2],
             "objective_name": ["uniformity", "optoelectronic", "thickness"],
         }
@@ -133,7 +133,7 @@ def test_candidate_model_summary_counts_declared_support_extrapolation() -> None
     candidate_rows = pd.DataFrame(
         {
             "run_id": ["baseline"] * 5,
-            "model_variant": ["default_current"] * 5,
+            "model_variant": ["dim_scaled_prior"] * 5,
             "pred_mean_0": [-0.1, 0.2, 0.4, 0.8, 1.1],
             "pred_mean_1": [-20.0, -5.0, 0.0, 5.0, 20.0],
             "pred_mean_2": [0.1, 0.3, 0.5, 0.7, 0.9],

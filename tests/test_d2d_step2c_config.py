@@ -44,7 +44,7 @@ def test_step2c_config_resolves_public_safe_debug_contract() -> None:
     assert config.bound_policies == ("none", "clip_ucb")
     assert config.primary_bound_policy == "clip_ucb"
     assert config.primary_penalty_variant == "radius_0_25"
-    assert config.model_variant_names == ("default_current", "conservative")
+    assert config.model_variant_names == ("dim_scaled_prior", "conservative")
     assert config.influence_sample_ids == config.expected_sample_ids
     assert config.shortlist_min == 8
     assert config.shortlist_max == 12
