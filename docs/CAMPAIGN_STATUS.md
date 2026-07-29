@@ -89,6 +89,49 @@ Validated on the 15 R0 observations, exact leave-one-out, null R2 = -0.148:
 Uniformity is exploration-only by measurement, not by choice. The interface must
 not imply the model knows more than it does about it.
 
+## Synthetic acceptance test
+
+`tests/test_dtlz2_acceptance.py` runs DTLZ2 (3 objectives, 10 inputs, known
+Pareto front) end to end through `campaign.py`. It exercises the algorithm with
+no dependence on whether the experimental measurements are right.
+
+```bash
+pytest tests/test_dtlz2_acceptance.py -m "not slow"   # 10 tests, ~12 s
+pytest tests/test_dtlz2_acceptance.py -m slow         # BO vs random, ~33 s
+```
+
+Measured on the negated DTLZ2 (max_hv = 0.807):
+
+| | R0 (15) | +R1 (5) | +R2 (3) |
+|---|---:|---:|---:|
+| hypervolume | 0.507 | 0.555 | 0.612 |
+
+Batch spacing: R1 min pairwise 0.735, R2 0.859, against a configured floor of
+0.15 -- local penalization is separating candidates, not merely not failing.
+
+**Cumulative hypervolume rises monotonically by construction**, so that alone is
+not evidence of optimisation -- it would hold for random sampling too. The
+informative result is the baseline comparison at equal budget (8 extra points
+from the same 15-point start):
+
+| | mean HV gain |
+|---|---:|
+| Bayesian optimisation | **+0.075** |
+| random on-grid search | +0.056 |
+
+A ratio of **1.35x**, and BO wins on **5 of 8 seeds** -- on the mean, not every
+seed. With 8 added points in 10 dimensions that is the honest expectation, so the
+test asserts the mean and not a per-seed win.
+
+Two conventions that fail *silently* if got wrong, both now covered:
+
+* DTLZ2 minimises by default; `negate=True` is mandatory or the test measures the
+  opposite of optimisation.
+* BoTorch's `Hypervolume` assumes maximisation and **silently drops points that
+  do not dominate the reference** -- no warning, no exception, just a smaller
+  number or 0.0. The helper asserts at least one point dominates before
+  trusting the result.
+
 ## Open issues -- read before trusting a batch
 
 1. **An unexplained 0.089 discrepancy on optoelectronic.** Two implementations of
@@ -121,7 +164,15 @@ not imply the model knows more than it does about it.
    One specific thing to look for: whether anything lands near
    `speed_1 = 1000`, a region with two contradictory observations in it.
 
-5. **Not started:** the tkinter launcher, replicate-variance pooling into
+5. **`metrics.compute_ref_pareto_hv` has a degenerate auto-reference.** When
+   `ref_point_np=None` it uses `mins - 1e-8`, essentially the nadir itself, so
+   every slab is 1e-8 thick: measured HV 6e-8 against 1.448 from BoTorch's
+   `infer_reference_point` on the same data. It also recomputes the reference
+   from the current data each call, so hypervolumes are not comparable across
+   iterations. The production path passes an explicit reference and is
+   unaffected; any new plotting code must do the same.
+
+6. **Not started:** the tkinter launcher, replicate-variance pooling into
    `train_Yvar` (Phase 4), and removal of the legacy Step 2C debug ceremony.
 
 ## Reproducing the analysis

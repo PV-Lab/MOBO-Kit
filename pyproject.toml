@@ -112,4 +112,5 @@ python_functions = ["test_*"]
 addopts = "-v --tb=short"
 markers = [
     "local_input: optional integration test requiring an ignored local_inputs artifact",
+    "slow: multi-seed acceptance test; deselect with -m 'not slow'",
 ]
