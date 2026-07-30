@@ -327,6 +327,20 @@ def test_generating_never_overwrites_an_existing_sheet(workbook, config, monkeyp
 # --------------------------------------------------------------------------- #
 
 
+@pytest.fixture
+def isolated_settings(monkeypatch):
+    """No remembered workbook, and no writing to the user's home.
+
+    Both matter. The launcher schedules a `check()` 200 ms after construction when
+    it remembers a workbook, so a path left behind by an earlier test raced the
+    explicit `check()` these tests perform and overwrote the pane with a different
+    result -- an order-dependent failure that only appeared in a full-suite run.
+    And a test suite has no business writing to ~/.mobo_kit either way.
+    """
+    monkeypatch.setattr("mobo_kit.launcher.remembered_workbook", lambda: None)
+    monkeypatch.setattr("mobo_kit.launcher.remember_workbook", lambda path: None)
+
+
 def _tk_available() -> bool:
     try:
         import tkinter
@@ -339,7 +353,9 @@ def _tk_available() -> bool:
 
 
 @pytest.mark.skipif(not _tk_available(), reason="no display for tkinter")
-def test_the_window_reports_status_through_its_worker_thread(workbook, config) -> None:
+def test_the_window_reports_status_through_its_worker_thread(
+    workbook, config, isolated_settings
+) -> None:
     """The UI does its work off the main thread and posts results through a queue.
     Nothing else covers that plumbing, and a deadlock there would look like a
     window that simply never responds."""
@@ -370,7 +386,9 @@ def test_the_window_reports_status_through_its_worker_thread(workbook, config) -
 
 
 @pytest.mark.skipif(not _tk_available(), reason="no display for tkinter")
-def test_the_window_shows_a_readable_error_rather_than_a_traceback(config) -> None:
+def test_the_window_shows_a_readable_error_rather_than_a_traceback(
+    config, isolated_settings
+) -> None:
     import time
 
     from mobo_kit.launcher import LauncherWindow
