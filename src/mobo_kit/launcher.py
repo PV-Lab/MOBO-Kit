@@ -38,9 +38,11 @@ from .campaign import (
     RoundResult,
     load_campaign_config,
     objective_names,
+    replicate_aggregates,
     run_r1_ucb,
     run_r2_qlognehvi,
 )
+from .replicate_variance import yvar_for_campaign
 from .scores import ScoreFinding, ScoreSeverity, describe_findings
 from .workbook_io import (
     CandidateSheetError,
@@ -198,12 +200,16 @@ def inspect_campaign(
 
 def gather_observations(
     workbook: str | Path, config: Mapping[str, Any], *, for_round: str
-) -> tuple[np.ndarray, np.ndarray, list[str]]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, list[str]]:
     """Every measured design point the next round should learn from.
 
     R1 trains on Sheet1 alone.  R2 trains on Sheet1 plus the aggregated R1
     conditions -- three films become one observation, which is why
     :func:`read_candidate_results` exists.
+
+    Returns ``(X, Y, Yvar, provenance)``.  ``Yvar`` is ``None`` unless the config
+    asks for measured replicate variance *and* replicated conditions exist to pool
+    from; see :mod:`replicate_variance`.
 
     Raises rather than dropping rows: a NaN objective reaching the GP is how a
     round gets proposed from data nobody checked.
@@ -221,6 +227,7 @@ def gather_observations(
     X = [contents.inputs.to_numpy(dtype=float)]
     Y = [contents.model_values.to_numpy(dtype=float)]
     provenance = [f"Sheet1: {contents.n_rows} conditions"]
+    Yvar: np.ndarray | None = None
 
     if for_round.upper() == "R2":
         results = read_candidate_results(path, config, "R1")
@@ -235,6 +242,20 @@ def gather_observations(
             f"R1 sheet: {results.n_conditions} conditions from "
             f"{len(results.replicates)} films"
         )
+        Yvar, floor_findings = yvar_for_campaign(
+            config,
+            results,
+            n_rows_without_replicates=contents.n_rows,
+            objective_names=names,
+            aggregates=replicate_aggregates(config),
+        )
+        if Yvar is not None:
+            provenance.append(
+                "observation noise: pooled between-film variance from the R1 "
+                "triplicates, not fitted"
+            )
+        for message in floor_findings:
+            provenance.append(f"WARNING {message}")
 
     X_all = np.vstack(X)
     Y_all = np.vstack(Y)
@@ -244,7 +265,7 @@ def gather_observations(
             f"{bad} observation(s) still hold a non-finite objective value after "
             "aggregation. Fix the measurements before proposing a round."
         )
-    return X_all, Y_all, provenance
+    return X_all, Y_all, Yvar, provenance
 
 
 # --------------------------------------------------------------------------- #
@@ -332,11 +353,11 @@ def generate_next_round(
         )
 
     say(f"Collecting observations for {round_name}...")
-    X, Y, provenance = gather_observations(path, config, for_round=round_name)
+    X, Y, Yvar, provenance = gather_observations(path, config, for_round=round_name)
 
     say(f"Fitting the model and scoring candidates for {round_name}. About 10 seconds.")
     runner = run_r1_ucb if round_name == "R1" else run_r2_qlognehvi
-    result = runner(config, X, Y, seed=seed)
+    result = runner(config, X, Y, seed=seed, observed_Yvar=Yvar)
 
     say(f"Writing {destination.name}...")
     replicates = int(

@@ -129,10 +129,12 @@ def test_an_unmeasured_r1_sheet_blocks_the_next_round(workbook, config) -> None:
 
 
 def test_r1_trains_on_sheet1_alone(workbook, config) -> None:
-    X, Y, provenance = gather_observations(workbook, config, for_round="R1")
+    X, Y, Yvar, provenance = gather_observations(workbook, config, for_round="R1")
     assert X.shape == (15, 10)
     assert Y.shape == (15, 3)
     assert provenance == ["Sheet1: 15 conditions"]
+    # no replicates exist yet, so the noise is still fitted rather than measured
+    assert Yvar is None
 
 
 def test_r2_trains_on_sheet1_plus_the_aggregated_r1_conditions(
@@ -141,10 +143,49 @@ def test_r2_trains_on_sheet1_plus_the_aggregated_r1_conditions(
     """Three films are one design point, so R2 sees 15 + 5, not 15 + 15."""
     out = write_candidate_sheet(workbook, config, _conditions(config), round_name="R1")
     _fill_candidate_sheet(out, config)
-    X, Y, provenance = gather_observations(workbook, config, for_round="R2")
+    X, Y, Yvar, provenance = gather_observations(workbook, config, for_round="R2")
     assert X.shape == (20, 10)
     assert Y.shape == (20, 3)
     assert "5 conditions from 15 films" in provenance[1]
+    # the live config still fits the noise; measured variance is one key away
+    assert Yvar is None
+
+
+def test_measured_replicate_variance_switches_on_from_config(workbook, config) -> None:
+    """The promise of wiring this before the data exists: when the triplicates
+    land, enabling it is a config edit, not a code change."""
+    import copy
+
+    out = write_candidate_sheet(workbook, config, _conditions(config), round_name="R1")
+    _fill_candidate_sheet(out, config, thickness=(700.0, 760.0))
+    # the films of a condition must actually differ, or there is no variance to pool
+    book = load_workbook(out)
+    sheet = book[sheet_name_for_round("R1")]
+    headers = [cell.value for cell in sheet[1]]
+    for row in range(2, sheet.max_row + 1):
+        offset = row % 3
+        sheet.cell(row=row, column=headers.index("T1") + 1).value = 700.0 + 40.0 * offset
+        sheet.cell(row=row, column=headers.index("Coverage") + 1).value = 0.9 + 0.02 * offset
+        # every objective needs film-to-film variation, or its pooled variance is
+        # zero -- which the pooling refuses, because identical replicates are a
+        # transcription rather than a measurement
+        sheet.cell(row=row, column=headers.index("Photoconductance (Max)") + 1).value = (
+            5e-07 * (1.0 + 0.1 * offset)
+        )
+    book.save(out)
+
+    enabled = copy.deepcopy(dict(config))
+    enabled["model"] = dict(enabled["model"])
+    enabled["model"]["observation_noise"] = "replicate_pooled"
+
+    X, Y, Yvar, provenance = gather_observations(workbook, enabled, for_round="R2")
+    assert Yvar is not None
+    assert Yvar.shape == Y.shape
+    assert np.all(Yvar > 0)
+    # the 15 R0 rows carry the full between-film variance; the R1 conditions,
+    # being means of three films, carry a third of it
+    assert Yvar[0, 2] == pytest.approx(3.0 * Yvar[15, 2])
+    assert any("pooled between-film variance" in item for item in provenance)
 
 
 def test_gathering_refuses_a_half_measured_film(workbook, config) -> None:

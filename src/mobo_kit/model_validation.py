@@ -595,7 +595,11 @@ def _assert_signal_not_collapsed(
         latent_sd = float(posterior.variance.clamp_min(0.0).sqrt().min())
         mean_values = posterior.mean.detach().reshape(-1)
         mean_spread = float(mean_values.std()) if mean_values.numel() > 1 else 0.0
-        noise_sd = float(gp.likelihood.noise.detach().reshape(-1)[0] ** 0.5)
+        # a FixedNoiseGaussianLikelihood (measured train_Yvar) carries one noise per
+        # observation rather than one for the model, so take the average rather than
+        # whichever row happens to be first
+        noise_values = gp.likelihood.noise.detach().reshape(-1)
+        noise_sd = float(noise_values.mean() ** 0.5)
         observed = target.detach().reshape(-1)
         target_spread = float(observed.std()) if observed.numel() > 1 else 0.0
     if noise_sd <= 0.0:
@@ -663,6 +667,7 @@ def _build_single_task_gp(
     y: torch.Tensor,
     variant: ModelVariantSpec,
     mean_module: Any = None,
+    train_Yvar: torch.Tensor | None = None,
 ) -> SingleTaskGP:
     if variant.use_dim_scaled_prior:
         # BoTorch's dimension-scaled LogNormal lengthscale prior, the same one
@@ -687,6 +692,28 @@ def _build_single_task_gp(
             kernel_kwargs["lengthscale_constraint"] = lengthscale_constraint
         base_kernel = MaternKernel(**kernel_kwargs)
     covar_module = ScaleKernel(base_kernel)
+    if train_Yvar is not None:
+        # Measured observation noise replaces fitted noise, so no noise prior or
+        # constraint applies -- there is nothing left to fit.
+        #
+        # BoTorch will accept BOTH `train_Yvar` and an explicit `likelihood` and
+        # then SILENTLY IGNORE the variance: the likelihood wins, stays a
+        # single-element GaussianLikelihood, and the replicate information is
+        # dropped with no error. Verified on 0.15.1. Hence the either/or here.
+        #
+        # `train_Yvar` is in the ORIGINAL target units; `Standardize` rescales it
+        # along with the targets. Passing an already-standardized variance would be
+        # wrong by var(Y) and would also fail silently.
+        model = SingleTaskGP(
+            X,
+            y,
+            train_Yvar=train_Yvar,
+            covar_module=covar_module,
+            outcome_transform=Standardize(m=1),
+        )
+        if mean_module is not None:
+            model.mean_module = mean_module
+        return model
     if variant.use_lognormal_noise_prior:
         # LogNormal(-4, 1) with a GreaterThan(1e-4) floor.  Without the prior the
         # marginal likelihood is free to drive the outputscale to zero and call
@@ -722,8 +749,15 @@ def fit_model_variant(
     cohort_fingerprint: str | None = None,
     cache: ModelFitCache | None = None,
     mean_module: Any = None,
+    train_Yvar: torch.Tensor | None = None,
 ) -> FittedModelRecord:
-    """Fit one strict independent GP per objective and return an audit record."""
+    """Fit one strict independent GP per objective and return an audit record.
+
+    ``train_Yvar`` is measured observation variance, shaped like ``Y``, in the
+    ORIGINAL target units.  Supplying it replaces the fitted noise entirely: there
+    is no noise hyperparameter left to optimise, so the variant's noise prior and
+    floor no longer apply to that fit.
+    """
     ids, names = _validate_dataset(X, Y, sample_ids, objective_names, minimum_rows=2)
     if not isinstance(variant, ModelVariantSpec):
         raise TypeError("variant must be a ModelVariantSpec.")
@@ -778,6 +812,11 @@ def fit_model_variant(
                     Y[:, objective_index : objective_index + 1],
                     variant,
                     mean_module=mean_module,
+                    train_Yvar=(
+                        None
+                        if train_Yvar is None
+                        else train_Yvar[:, objective_index : objective_index + 1]
+                    ),
                 )
             fit_warning_rows.extend(
                 _warning_rows(

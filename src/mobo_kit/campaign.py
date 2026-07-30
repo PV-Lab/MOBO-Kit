@@ -506,12 +506,20 @@ def _fit_models(
     X_norm: np.ndarray,
     Y_raw: np.ndarray,
     seed: int,
+    Yvar_model: np.ndarray | None = None,
 ) -> Any:
     """One GP per objective, each with its declared structured mean.
 
     Objectives with a ``mean_function`` train on the response-space target with
     the OLS trend frozen into the mean module, so ``posterior()`` already carries
     it and no caller has to add it back.  Objectives without one are unchanged.
+
+    ``Yvar_model`` is measured observation variance in the MODEL TARGET space, one
+    column per objective -- so for thickness that is the variance of ``log T``, not
+    of nanometres, because ``response: log`` means the model trains on the log.
+    :func:`replicate_variance.pool_between_film_variance` produces it in exactly
+    that space, which is why aggregation and variance pooling are required to share
+    one space.
     """
     variant = model_variant_spec(str(config.get("model", {}).get("variant")))
     specs = _objective_specs(config)
@@ -541,6 +549,13 @@ def _fit_models(
             variant=variant,
             seed=seed,
             mean_module=mean_module,
+            train_Yvar=(
+                None
+                if Yvar_model is None
+                else torch.tensor(
+                    np.asarray(Yvar_model, dtype=float)[:, index], dtype=torch.double
+                ).unsqueeze(-1)
+            ),
         )
         models.append(record.model.models[0])
         # A fit can succeed and still be worth distrusting -- most importantly when
@@ -573,6 +588,7 @@ def fit_campaign_models(
     Y_raw: np.ndarray,
     *,
     seed: int | None = None,
+    Yvar: np.ndarray | None = None,
 ) -> tuple[Any, tuple[str, ...]]:
     """Fit one GP per objective exactly as a round does.
 
@@ -600,7 +616,12 @@ def fit_campaign_models(
     )
     values = np.asarray(X_phys, dtype=float)
     model, fit_warnings, _raw = _fit_models(
-        config, values, _normalise(design, values), Y_raw, resolved_seed
+        config,
+        values,
+        _normalise(design, values),
+        Y_raw,
+        resolved_seed,
+        Yvar_model=Yvar,
     )
     return model, fit_warnings
 
@@ -649,6 +670,7 @@ def run_r1_ucb(
     *,
     n: int | None = None,
     seed: int | None = None,
+    observed_Yvar: np.ndarray | None = None,
 ) -> RoundResult:
     """UCB-HVI batch with local penalisation.
 
@@ -673,6 +695,7 @@ def run_r1_ucb(
         observed_norm,
         observed_Y_raw,
         resolved_seed,
+        Yvar_model=observed_Yvar,
     )
 
     on_grid = _on_grid_mask(design, observed_X_phys)
@@ -740,6 +763,7 @@ def run_r2_qlognehvi(
     *,
     n: int | None = None,
     seed: int | None = None,
+    observed_Yvar: np.ndarray | None = None,
 ) -> RoundResult:
     """qLogNEHVI batch.  ``observed_Y_raw`` follows the same contract as R1.
 
@@ -763,6 +787,7 @@ def run_r2_qlognehvi(
         observed_norm,
         observed_Y_raw,
         resolved_seed,
+        Yvar_model=observed_Yvar,
     )
 
     on_grid = _on_grid_mask(design, observed_X_phys)

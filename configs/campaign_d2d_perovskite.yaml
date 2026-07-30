@@ -307,7 +307,30 @@ model:
   # Applying an R1-derived estimate to the R0 rows assumes the measurement
   # process is unchanged between rounds; that assumption is recorded here
   # deliberately rather than left implicit.
+  #
+  # Stays `fit_from_marginal_likelihood` until the R1 triplicates land. The
+  # machinery is wired and tested (replicate_variance.py); it needs data, not code.
   observation_noise: fit_from_marginal_likelihood
+
+  replicate_variance:
+    # TWO DIFFERENT VARIANCES. Do not substitute one for the other.
+    #
+    # BETWEEN-FILM is what train_Yvar needs: two films from the same recipe differ
+    # by everything that varies run to run. Only measurable once R1 ships
+    # triplicates (5 conditions x 2 dof = 10 dof).
+    #
+    # WITHIN-FILM is the scatter of the 2-4 thickness points across one film --
+    # measurement plus spatial nonuniformity. Available today: pooled over the R0
+    # rows it is 0.0593 on log(T), 24 dof. It contains NO run-to-run variation, so
+    # it is a FLOOR, not an estimate. If pooled between-film variance ever comes
+    # out below it, films would be more reproducible than points on a single film,
+    # which is not a thing -- so it indicates a measurement or pooling mistake.
+    sanity_floor:
+      thickness: 0.0593
+    # Film count assumed for rows that have no replicates -- the R0 rows, which
+    # predate the triplicate policy. 1 means their observation carries the full
+    # between-film variance rather than a third of it.
+    rows_without_replicates: 1
 
 reproducibility:
   seed: 73
