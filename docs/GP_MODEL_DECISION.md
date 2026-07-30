@@ -133,6 +133,17 @@ there — fitted noise 0.93 against a latent predictive sd of 1e-4, giving
 z-scores in the thousands. Adding BoTorch's `LogNormal(-4, 1)` noise prior
 removes it entirely.
 
+**Since 2026-07-30 the guard asks a second question.** A collapsed latent sd means
+one of two things, and they need different answers. If the posterior *mean* is also
+near-constant — measured against the objective's observed spread, floor 5% — the
+model has genuinely explained the data as noise and the fit is refused. If the mean
+still varies, a structured mean is carrying the signal: the residual GP having
+nothing left to model is success, not degeneracy, and refusing would dead-end the
+campaign exactly when the physics model started working. That case warns instead,
+naming the two things to distrust — the exploration term is dead, and the frozen
+mean coefficients carry no uncertainty, so reported intervals are understated
+rather than earned. Details in `CAMPAIGN_STATUS.md` issue 6.
+
 The collapse is specific to the thickness *score*, the folded 2-to-1 objective —
 uniformity, optoelectronic and raw nm are stable either way, and the noise prior
 costs them nothing (latent sd 0.1226 vs 0.1236). It matters because acquisition

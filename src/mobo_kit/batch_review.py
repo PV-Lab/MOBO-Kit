@@ -186,6 +186,9 @@ class BatchReview:
     probe_verdicts: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
     findings: tuple[ScoreFinding, ...] = ()
+    model_warnings: tuple[str, ...] = ()
+    """Fits that succeeded but deserve distrust. Printed before anything else,
+    because they change how every number below should be read."""
     context: dict[str, Any] = field(default_factory=dict)
 
     def to_text(self) -> str:
@@ -198,6 +201,11 @@ class BatchReview:
         ]
         for key, value in self.context.items():
             lines.append(f"{key:<22} {value}")
+        if self.model_warnings:
+            # first, not last: these change how every number below reads
+            lines += ["", "!! READ THIS BEFORE THE NUMBERS", "-" * width]
+            for warning in self.model_warnings:
+                lines += _wrap(warning, width) + [""]
         lines += ["", "PROPOSED CONDITIONS", "-" * width]
         lines.append(
             self.candidates.to_string(
@@ -323,7 +331,9 @@ def build_batch_review(
                 f"declared input. Declared inputs: {input_names}."
             )
 
-    model = fit_campaign_models(config, observed, observed_Y_raw, seed=resolved_seed)
+    model, model_warnings = fit_campaign_models(
+        config, observed, observed_Y_raw, seed=resolved_seed
+    )
 
     utility_mean, utility_sd = _utility_moments(
         config, model, proposed, round_name=round_name, seed=resolved_seed
@@ -398,6 +408,7 @@ def build_batch_review(
         probe_verdicts=tuple(verdicts),
         notes=review_notes_from_config(config),
         findings=tuple(findings),
+        model_warnings=tuple(model_warnings),
         context=dict(context or {}),
     )
 
@@ -630,6 +641,13 @@ def write_review_sheet(
         sheet.cell(row=row, column=2, value=str(value))
         row += 1
     blank()
+
+    if review.model_warnings:
+        # above the table, for the same reason it is first in the text version
+        heading("READ THIS BEFORE THE NUMBERS")
+        for warning in review.model_warnings:
+            paragraph(warning)
+        blank()
 
     heading("PROPOSED CONDITIONS")
     table(review.candidates)

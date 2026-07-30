@@ -431,6 +431,124 @@ def test_findings_are_carried_worst_first(review) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# when the mean function explains the data
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def collapsed_residual(monkeypatch):
+    """Force the condition rather than hope data produces it.
+
+    Whether a given dataset lands on a collapsed residual is knife-edge -- measured
+    across residual magnitudes from 0 to 0.3, it fires at 0, 1e-4, 0.01 and 0.03 but
+    not at 0.001 or 0.1, because it depends on where the MLL optimiser lands. A test
+    that depended on that would be a flake. The guard's own decision is tested
+    directly in test_model_validation.py; what these tests check is that its warning
+    reaches the people who need it.
+
+    Only objectives with a `StructuredMean` are collapsed, which is exactly the case
+    being emulated: the mean function explains the data, so the residual GP has
+    nothing left. Uniformity has no mean function and stays healthy -- collapsing it
+    would be a true collapse and must still hard-fail.
+    """
+    import mobo_kit.model_validation as validation_module
+    from mobo_kit.structured_mean import StructuredMean
+
+    real_fit = validation_module.fit_gpytorch_mll
+
+    def collapse_structured_only(mll):
+        real_fit(mll)
+        if isinstance(getattr(mll.model, "mean_module", None), StructuredMean):
+            import torch
+
+            mll.model.covar_module.outputscale = torch.tensor(1e-12, dtype=torch.double)
+            mll.model.likelihood.noise = torch.tensor(0.9, dtype=torch.double)
+        return mll
+
+    monkeypatch.setattr(validation_module, "fit_gpytorch_mll", collapse_structured_only)
+
+
+def test_a_round_still_proposes_when_the_mean_function_explains_the_data(
+    config, collapsed_residual
+) -> None:
+    """The behaviour that matters: refusing here would dead-end the campaign
+    exactly when the physics model started working, with no way out -- better data
+    cannot be collected without first proposing conditions."""
+    from mobo_kit.campaign import run_r1_ucb
+
+    X, Y = _observations(config)
+    result = run_r1_ucb(config, X, Y, n=2)
+    assert result.n_conditions == 2
+
+    warnings = result.diagnostics["model_fit_warnings"]
+    assert warnings, "the collapsed residual GP should have warned"
+    joined = " ".join(warnings)
+    assert "exploration term has degenerated" in joined
+    assert "UNDERSTATED" in joined
+    # the two objectives with a mean function, and not the one without
+    assert any(w.startswith("thickness") for w in warnings)
+    assert not any(w.startswith("uniformity") for w in warnings)
+
+
+def test_the_round_diagnostics_carry_no_library_deprecation_noise(
+    config, collapsed_residual
+) -> None:
+    """`record.warnings` also collects every Python warning raised while fitting --
+    on this stack, ~18 numpy-2.0 deprecation notices per fit. Putting those in front
+    of someone reviewing a batch is how people learn to ignore warnings."""
+    from mobo_kit.campaign import run_r1_ucb
+
+    X, Y = _observations(config)
+    warnings = run_r1_ucb(config, X, Y, n=2).diagnostics["model_fit_warnings"]
+    assert warnings
+    assert not any("numpy" in w.lower() or "__array__" in w for w in warnings)
+
+
+def _collapsed_review(config):
+    X, Y = _observations(config)
+    names = [i["name"] for i in config["inputs"]]
+    return build_batch_review(
+        config,
+        X,
+        Y,
+        pd.DataFrame(_rows(config, 2, seed=77), columns=names),
+        round_name="R1",
+    )
+
+
+def test_the_review_carries_the_warning_above_the_numbers(
+    config, collapsed_residual
+) -> None:
+    built = _collapsed_review(config)
+    assert built.model_warnings
+
+    text = built.to_text()
+    assert "READ THIS BEFORE THE NUMBERS" in text
+    # before, not after: it changes how every number below should be read
+    assert text.index("READ THIS BEFORE THE NUMBERS") < text.index("PROPOSED CONDITIONS")
+    assert "understated" in text.lower()
+    assert "no uncertainty" in text
+
+
+def test_the_warning_reaches_the_review_sheet_too(
+    tmp_path, config, collapsed_residual
+) -> None:
+    built = _collapsed_review(config)
+    path = tmp_path / "candidates.xlsx"
+    _candidate_book(path)
+    write_review_sheet(path, built)
+    body = _sheet_text(path)
+    assert "READ THIS BEFORE THE NUMBERS" in body
+    assert "UNDERSTATED" in body
+
+
+def test_a_healthy_fit_carries_no_warning(review) -> None:
+    """The warning has to mean something, which means it must not always fire."""
+    assert review.model_warnings == ()
+    assert "READ THIS BEFORE THE NUMBERS" not in review.to_text()
+
+
+# --------------------------------------------------------------------------- #
 # the sheet
 # --------------------------------------------------------------------------- #
 

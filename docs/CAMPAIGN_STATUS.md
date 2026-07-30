@@ -303,36 +303,51 @@ Two conventions that fail *silently* if got wrong, both now covered:
    objective and worst in another, which is what a genuine trade-off front is.
    Plotting code may now simply pass `config["reference_point_utility"]`.
 
-6. **New, found 2026-07-30: the signal-collapse guard cannot tell a collapsed GP
-   from a mean function that works.** `_assert_signal_not_collapsed` compares
-   `gp.posterior(X).variance` against the fitted noise. A mean module does not
-   enter the variance, so when a structured mean explains most of the data the
-   residual GP's latent sd goes to ~0 and the guard raises `ModelFitError` —
-   with a message asserting "its posterior mean is effectively constant", which is
-   verifiably false in that case, because `posterior().mean` carries the fitted
-   trend.
+6. **Done 2026-07-30 — the signal-collapse guard now distinguishes a collapsed GP
+   from a mean function that works.** It used to compare
+   `gp.posterior(X).variance` against the fitted noise and stop there. A mean
+   module does not enter the variance, so when a structured mean explains most of
+   the data the residual GP's latent sd goes to ~0 and the guard raised
+   `ModelFitError` — asserting "its posterior mean is effectively constant", which
+   is verifiably false in that case, because `posterior().mean` carries the trend.
 
-   Two situations share one numeric signature:
+   Two situations share one numeric signature and now get different answers:
 
-   * **True collapse** (the documented one): zero-mean GP, outputscale → 0,
-     posterior mean genuinely flat, acquisition meaningless. Must fail.
+   * **True collapse**: zero-mean GP, outputscale → 0, posterior mean genuinely
+     flat, nothing can be ranked. Still `ModelFitError`.
    * **The mean function did its job**: residual variance ~0, posterior mean
-     tracks the trend, candidate ranking still works — only the UCB exploration
-     term has degenerated. Currently also fails, which blocks the round.
+     tracks the trend, ranking still works. Now a loud warning and the round
+     proceeds. Refusing would dead-end the campaign at the moment the physics model
+     started working, with no remedy — better data cannot be collected without
+     first proposing conditions. The review artifact is the designed gate.
 
-   Not reachable on the current R0 data, and reproducible on synthetic data whose
-   thickness follows `log T ~ log(speed_1) + log(precur_conc)` closely (it is why
-   `tests/test_batch_review.py` builds data with deliberate residual structure).
-   **The risk rises with better data**, so this matters for the intake path: if the
-   group returns cleaner thickness measurements, the trend may explain more and the
-   launcher would refuse to propose a round.
+   The warning is not a formality, and says so: UCB's exploration term reads the
+   latent posterior that just collapsed, and the mean module's coefficients are
+   frozen buffers with no uncertainty of their own, so the narrow intervals such a
+   model reports are **understated rather than earned**. It appears above the
+   numbers in both the launcher pane and the `Review` sheet, and in
+   `RoundResult.diagnostics["model_fit_warnings"]`.
 
-   Suggested fix, not applied — the guard is deliberate and its rationale is
-   measured, so this is a decision rather than a cleanup: test what the message
-   claims. Raise only when the latent sd is negligible **and** the posterior mean
-   is near-constant across the evaluated points; when the mean varies, record a
-   loud `ModelFitWarning` instead, since the exploration term really has
-   degenerated even though the model is usable.
+   Two calibration notes worth keeping:
+
+   * "Near-constant" is measured against the **observed spread of that
+     objective**, not against the fitted noise sd. Noise-relative was the first
+     attempt and is wrong: the noise is inflated precisely in the degenerate case,
+     so the test co-varies with what it is trying to detect. Measured instance — a
+     linear mean on `anneal_temp` against a forced noise of 0.9 scored 0.38 on the
+     noise yardstick and would have been called constant while it was tracking the
+     data. Floor is 5% of the observed spread.
+   * Only the guard's own warnings reach a human. `record.warnings` also collects
+     every Python warning raised during fitting — about 18 numpy-2.0 deprecation
+     notices per fit on this stack — and putting those in front of someone
+     reviewing a batch is how people learn to ignore warnings.
+
+   Whether a given dataset trips the collapse is knife-edge: measured across
+   residual magnitudes from 0 to 0.3 it fires at 0, 1e-4, 0.01 and 0.03 but not at
+   0.001 or 0.1, because it depends where the MLL optimiser lands. The guard's
+   decision is therefore tested directly, and the propagation tests force the
+   condition rather than hoping data produces it. No fit on the current R0 data
+   warns, so nothing about the live campaign changed.
 
 7. **Not started:** replicate-variance pooling into `train_Yvar` (Phase 4) — and
    `read_candidate_results().replicate_spread` now hands it the numbers. The

@@ -43,7 +43,11 @@ from .design import Design, build_design_from_config
 from .lhs import lhs_dataframe_optimized
 from botorch.models.model_list_gp_regression import ModelListGP
 
-from .model_validation import fit_model_variant, model_variant_spec
+from .model_validation import (
+    SIGNAL_COLLAPSE_STAGE,
+    fit_model_variant,
+    model_variant_spec,
+)
 from .scores import MeasurementSpec, entry_columns, measurement_spec_from_config
 from .structured_mean import build_structured_mean, mean_spec_from_config
 from .objectives import ObjectiveSpec, ObjectiveTransform
@@ -518,6 +522,7 @@ def _fit_models(
     names = list(design.names)
 
     models = []
+    warnings: list[str] = []
     for index, (spec, entry) in enumerate(zip(specs, entries)):
         mean_spec = mean_spec_from_config(entry)
         y = np.asarray(Y_raw, dtype=float)[:, index]
@@ -537,7 +542,20 @@ def _fit_models(
             mean_module=mean_module,
         )
         models.append(record.model.models[0])
-    return ModelListGP(*models)
+        # A fit can succeed and still be worth distrusting -- most importantly when
+        # the GP's signal component collapsed but the mean function carried the
+        # trend. Discarding these is how such a fit reaches a batch silently.
+        #
+        # Only the guard's own warnings travel. `record.warnings` also captures
+        # every Python warning raised during fitting, which on this stack means ~18
+        # numpy-2.0 deprecation notices per fit; putting those in front of a human
+        # reviewing a batch is how people learn to ignore warnings.
+        warnings.extend(
+            warning.message
+            for warning in record.warnings
+            if warning.stage == SIGNAL_COLLAPSE_STAGE
+        )
+    return ModelListGP(*models), tuple(warnings)
 
 
 def fit_campaign_models(
@@ -546,7 +564,7 @@ def fit_campaign_models(
     Y_raw: np.ndarray,
     *,
     seed: int | None = None,
-) -> Any:
+) -> tuple[Any, tuple[str, ...]]:
     """Fit one GP per objective exactly as a round does.
 
     Same normalisation, same structured means, same variant, same seeding -- so
@@ -556,6 +574,12 @@ def fit_campaign_models(
 
     ``Y_raw`` holds the MODEL SOURCE values in objective order, the same contract
     as :func:`run_r1_ucb`.
+
+    Returns ``(model, warnings)``.  The warnings are returned rather than logged
+    because a fit can succeed and still deserve distrust: the loudest case is a
+    GP whose signal component collapsed while its mean function carried the trend,
+    which leaves candidate ranking intact but makes the reported intervals
+    understated.  Anything showing a batch to a human should show these too.
     """
     design = build_design_from_config(dict(config))
     resolved_seed = (
@@ -629,7 +653,7 @@ def run_r1_ucb(
     penalization = _penalization(config)
 
     observed_norm = _normalise(design, observed_X_phys)
-    model = _fit_models(
+    model, fit_warnings = _fit_models(
         config,
         np.asarray(observed_X_phys, dtype=float),
         observed_norm,
@@ -686,6 +710,7 @@ def run_r1_ucb(
             "off_grid_observations_excluded_from_pool_bookkeeping": int(
                 (~on_grid).sum()
             ),
+            "model_fit_warnings": list(fit_warnings),
             "validity": report,
         },
     )
@@ -715,7 +740,7 @@ def run_r2_qlognehvi(
     penalization = _penalization(config)
 
     observed_norm = _normalise(design, observed_X_phys)
-    model = _fit_models(
+    model, fit_warnings = _fit_models(
         config,
         np.asarray(observed_X_phys, dtype=float),
         observed_norm,
@@ -770,6 +795,7 @@ def run_r2_qlognehvi(
             "off_grid_observations_excluded_from_pool_bookkeeping": int(
                 (~on_grid).sum()
             ),
+            "model_fit_warnings": list(fit_warnings),
             "validity": report,
         },
     )

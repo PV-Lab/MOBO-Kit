@@ -18,7 +18,7 @@ Then verify the state yourself in one command:
 pytest -q
 ```
 
-Expect **387 passed, 0 failed** (~65 s). If that holds, everything below is true.
+Expect **394 passed, 0 failed** (~65 s). If that holds, everything below is true.
 
 Two of those tests open a real tkinter window and drive it; they skip themselves
 if there is no display.

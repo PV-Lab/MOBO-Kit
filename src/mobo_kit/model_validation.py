@@ -511,59 +511,144 @@ class SignalCollapseError(RuntimeError):
 
 
 #: A fit whose latent (signal) sd falls below this multiple of the fitted noise
-#: sd has explained the data as pure noise.  Acquisition reads the latent
-#: posterior, so such a model produces a near-deterministic score surface and a
-#: meaningless exploration term, even though its predictive intervals look fine
-#: because the inflated noise hides the collapse.
+#: sd has no signal component left in its GP.  Acquisition reads the latent
+#: posterior, so the exploration term degenerates, even though predictive
+#: intervals look fine because the inflated noise hides it.
 MINIMUM_LATENT_TO_NOISE_SD_RATIO = 1.0e-2
+
+#: How much the posterior MEAN must vary across the training inputs, as a fraction
+#: of how much the OBSERVATIONS vary, for the fit to be able to rank candidates.
+#:
+#: This is the second half of the diagnosis, and what separates two very different
+#: situations that share one numeric signature.
+#:
+#: The observed spread is the yardstick rather than the fitted noise sd, which was
+#: the first attempt and is wrong: the noise is inflated precisely in the
+#: degenerate case, so a noise-relative test co-varies with the thing it is trying
+#: to detect.  Measured instance -- a linear mean on `anneal_temp` against a forced
+#: noise of 0.9 gave a mean/noise ratio of 0.38 and would have been called
+#: "effectively constant" while it was in fact tracking the data.
+#:
+#: Against the observed spread the question is scale-free and stable: does the
+#: model's mean move with the measurements, or not at all?
+MINIMUM_MEAN_SPREAD_TO_TARGET_RATIO = 0.05
+
+#: Fit stage name for the guard, so warnings and errors are filterable.
+SIGNAL_COLLAPSE_STAGE = "signal_collapse_guard"
+
+#: Warning category raised when the GP's signal component has collapsed but the
+#: mean function still carries a usable trend.
+EXPLORATION_DEGENERATE_CATEGORY = "ExplorationTermDegenerate"
 
 
 def _assert_signal_not_collapsed(
     gp: SingleTaskGP,
     X: torch.Tensor,
+    target: torch.Tensor,
     *,
     variant: ModelVariantSpec,
     objective_index: int,
     objective_name: str,
     fit_key: str,
     omitted_sample_id: Hashable | None,
-    fit_warnings: Sequence[ModelFitWarning],
+    fit_warnings: list[ModelFitWarning] | Sequence[ModelFitWarning],
 ) -> None:
-    """Fail loudly when the outputscale has collapsed to zero.
+    """Judge a fit whose GP signal component has gone to zero.
 
     This is a numerical guard, not a configuration check.  Naming a variant
     correctly cannot prevent a degenerate optimum: the same contract refitted on
     different data -- more observations, replicate-derived ``train_Yvar``, a new
-    round -- can land there again.  So the assertion runs on every fit.
+    round -- can land there again.  So it runs on every fit.
 
+    **Two situations share the collapsed-latent-sd signature, and they need
+    different answers.**
+
+    *True collapse.*  A zero-mean GP whose outputscale went to zero: the
+    posterior mean is flat, nothing can be ranked, acquisition is meaningless.
     Observed instance: 10 of 15 leave-one-out folds of the thickness score fitted
-    a noise of 0.93 against a latent sd of 1e-4, a ratio of ~1e-4.
+    a noise of 0.93 against a latent sd of 1e-4.  This must fail.
+
+    *The mean function did its job.*  With a ``StructuredMean`` carrying the
+    trend, the residual GP can legitimately have nothing left to model.  The
+    posterior *mean* still varies -- the mean module is not part of the covariance
+    and so never enters ``posterior().variance`` -- so candidates still rank and
+    the round is still worth proposing.  Refusing here would dead-end the campaign
+    at the moment the physics model started working, with no remedy available:
+    better data cannot be collected without first proposing conditions.  So this
+    warns instead, and the human review artifact is the gate.
+
+    The warning is not a formality.  Two things are genuinely wrong with such a
+    fit and both are named in its message: UCB's exploration term has degenerated,
+    and the mean module's coefficients are frozen buffers carrying no uncertainty
+    of their own, so the narrow intervals the model reports are **understated
+    rather than earned**.
     """
     with torch.no_grad():
-        latent_sd = float(gp.posterior(X).variance.clamp_min(0.0).sqrt().min())
+        posterior = gp.posterior(X)
+        latent_sd = float(posterior.variance.clamp_min(0.0).sqrt().min())
+        mean_values = posterior.mean.detach().reshape(-1)
+        mean_spread = float(mean_values.std()) if mean_values.numel() > 1 else 0.0
         noise_sd = float(gp.likelihood.noise.detach().reshape(-1)[0] ** 0.5)
+        observed = target.detach().reshape(-1)
+        target_spread = float(observed.std()) if observed.numel() > 1 else 0.0
     if noise_sd <= 0.0:
         return
-    ratio = latent_sd / noise_sd
-    if ratio < MINIMUM_LATENT_TO_NOISE_SD_RATIO:
+    latent_ratio = latent_sd / noise_sd
+    if latent_ratio >= MINIMUM_LATENT_TO_NOISE_SD_RATIO:
+        return
+
+    # a constant objective has nothing to rank by and nothing to diagnose
+    mean_ratio = mean_spread / target_spread if target_spread > 0.0 else 0.0
+    measured = (
+        f"minimum latent sd {latent_sd:.3e} is {latent_ratio:.3e} of the fitted "
+        f"noise sd {noise_sd:.3e}, below the "
+        f"{MINIMUM_LATENT_TO_NOISE_SD_RATIO:g} floor"
+    )
+
+    if mean_ratio < MINIMUM_MEAN_SPREAD_TO_TARGET_RATIO:
         raise ModelFitError(
             variant_name=variant.name,
             fit_key=fit_key,
             omitted_sample_id=omitted_sample_id,
             objective_index=objective_index,
             objective_name=objective_name,
-            stage="signal_collapse_guard",
+            stage=SIGNAL_COLLAPSE_STAGE,
             cause=SignalCollapseError(
-                f"minimum latent sd {latent_sd:.3e} is {ratio:.3e} of the fitted "
-                f"noise sd {noise_sd:.3e}, below the "
-                f"{MINIMUM_LATENT_TO_NOISE_SD_RATIO:g} floor. The model has "
-                "explained the data as pure noise: its posterior mean is "
-                "effectively constant and its acquisition scores are meaningless. "
-                "Predictive intervals do NOT reveal this, because the inflated "
-                "noise masks the collapse."
+                f"{measured}, and the posterior mean varies by only "
+                f"{mean_spread:.3e} across the training inputs "
+                f"({mean_ratio:.3e} of the observed spread {target_spread:.3e}, "
+                f"floor {MINIMUM_MEAN_SPREAD_TO_TARGET_RATIO:g}). The model has explained "
+                "the data as pure noise: its posterior mean is effectively "
+                "constant, so it cannot order two candidates and its acquisition "
+                "scores are meaningless. Predictive intervals do NOT reveal this, "
+                "because the inflated noise masks the collapse."
             ),
             fit_warnings=tuple(fit_warnings),
         )
+
+    warning = ModelFitWarning(
+        variant_name=variant.name,
+        fit_key=fit_key,
+        omitted_sample_id=omitted_sample_id,
+        objective_index=objective_index,
+        objective_name=objective_name,
+        stage=SIGNAL_COLLAPSE_STAGE,
+        warning_category=EXPLORATION_DEGENERATE_CATEGORY,
+        message=(
+            f"{objective_name}: {measured}, but the posterior mean still varies by "
+            f"{mean_spread:.3e} across the training inputs, {mean_ratio:.2f} of the "
+            f"observed spread, so the mean function is carrying the signal and "
+            "candidates can still be ranked. "
+            "Two consequences to distrust: UCB's exploration term has degenerated, "
+            "because it reads the latent posterior that just collapsed; and the "
+            "mean module's coefficients are frozen buffers with no uncertainty of "
+            "their own, so the narrow intervals this model reports are UNDERSTATED "
+            "rather than earned. Treat its confidence, especially away from the "
+            "observed points, as unproven."
+        ),
+    )
+    if isinstance(fit_warnings, list):
+        fit_warnings.append(warning)
 
 
 def _build_single_task_gp(
@@ -764,6 +849,7 @@ def fit_model_variant(
         _assert_signal_not_collapsed(
             gp,
             X,
+            Y[:, objective_index],
             variant=variant,
             objective_index=objective_index,
             objective_name=objective_name,

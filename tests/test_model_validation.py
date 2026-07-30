@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import warnings
 
+import gpytorch
 import numpy as np
 import pandas as pd
 import pytest
@@ -569,6 +570,96 @@ def test_signal_collapse_guard_fires_on_a_degenerate_fit(
     assert excinfo.value.stage == "signal_collapse_guard"
     assert isinstance(excinfo.value.cause, validation_module.SignalCollapseError)
     assert "pure noise" in str(excinfo.value.cause)
+
+
+def test_signal_collapse_warns_rather_than_fails_when_a_mean_carries_the_trend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same collapsed outputscale, but with a mean module doing the work.
+
+    A mean module is not part of the covariance, so it never enters
+    `posterior().variance` -- the latent sd collapses exactly as above while the
+    posterior MEAN still varies and candidates still rank. Refusing here would
+    dead-end the campaign at the moment the physics model started working, with no
+    way out: better data cannot be collected without first proposing conditions.
+
+    So it warns, and the warning has to be honest about what is wrong -- the
+    exploration term is dead, and the frozen mean coefficients carry no
+    uncertainty, so the reported intervals are understated rather than earned.
+    """
+
+    class VaryingMean(gpytorch.means.Mean):
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return 5.0 * x[..., 0]
+
+    X = torch.rand(12, 2, dtype=torch.double)
+    Y = (5.0 * X[:, :1]).double()
+
+    real_fit = validation_module.fit_gpytorch_mll
+
+    def collapse_outputscale(mll):
+        real_fit(mll)
+        mll.model.covar_module.outputscale = torch.tensor(1e-12, dtype=torch.double)
+        mll.model.likelihood.noise = torch.tensor(0.9, dtype=torch.double)
+        return mll
+
+    monkeypatch.setattr(validation_module, "fit_gpytorch_mll", collapse_outputscale)
+    record = fit_model_variant(
+        X,
+        Y,
+        sample_ids=tuple(range(12)),
+        objective_names=("y",),
+        variant=DIM_SCALED_PRIOR,
+        mean_module=VaryingMean(),
+    )
+
+    collapse_warnings = [
+        warning
+        for warning in record.warnings
+        if warning.stage == validation_module.SIGNAL_COLLAPSE_STAGE
+    ]
+    assert len(collapse_warnings) == 1
+    warning = collapse_warnings[0]
+    assert warning.warning_category == validation_module.EXPLORATION_DEGENERATE_CATEGORY
+    assert "exploration term has degenerated" in warning.message
+    assert "UNDERSTATED" in warning.message
+    assert "no uncertainty" in warning.message
+    # and the fit is usable: that is the whole point of not raising
+    assert record.model is not None
+
+
+def test_a_flat_posterior_mean_still_fails_even_with_a_mean_module(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The distinction is the posterior mean, not the presence of a mean module.
+    A constant mean module carries no information, so this is a true collapse."""
+
+    class ConstantMean(gpytorch.means.Mean):
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return torch.zeros(x.shape[:-1], dtype=x.dtype, device=x.device)
+
+    X = torch.rand(12, 2, dtype=torch.double)
+    Y = torch.rand(12, 1, dtype=torch.double)
+    real_fit = validation_module.fit_gpytorch_mll
+
+    def collapse_outputscale(mll):
+        real_fit(mll)
+        mll.model.covar_module.outputscale = torch.tensor(1e-12, dtype=torch.double)
+        mll.model.likelihood.noise = torch.tensor(0.9, dtype=torch.double)
+        return mll
+
+    monkeypatch.setattr(validation_module, "fit_gpytorch_mll", collapse_outputscale)
+    with pytest.raises(ModelFitError) as excinfo:
+        fit_model_variant(
+            X,
+            Y,
+            sample_ids=tuple(range(12)),
+            objective_names=("y",),
+            variant=DIM_SCALED_PRIOR,
+            mean_module=ConstantMean(),
+        )
+    assert excinfo.value.stage == "signal_collapse_guard"
+    assert "cannot order two candidates" in str(excinfo.value.cause)
 
 
 def test_signal_collapse_guard_passes_a_healthy_fit() -> None:
