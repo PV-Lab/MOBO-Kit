@@ -67,9 +67,15 @@ inputs:
     stop: 25
     step: 2
 
-# All three utilities are maximised after transformation. `model_source_column`
-# is what the GP TRAINS on; `transform` maps a model output to utility. The two
-# differ only for thickness.
+# All three utilities are maximised after transformation. `transform` maps a
+# model output to utility; the two differ only for thickness.
+#
+# `measurement` is what the GP trains on: a recipe plus the raw measurement
+# columns it consumes, computed in Python. `model_source_column` names the
+# workbook cell that USED to be read directly and is now only a label and a
+# cross-check target. Three of those cells are pasted literals rather than
+# formulas, so they do not update when the measurements behind them change --
+# see docs/CAMPAIGN_STATUS.md issue 2 for the audit.
 objectives:
   contract_version: d2d-objectives-v2-nm-thickness
   # Scales are FIXED for the whole campaign and must never be re-derived from
@@ -83,6 +89,21 @@ objectives:
     model_source_column: "Uniformity score"        # workbook Z = L*N*O
     transform: affine
     goal: maximize
+    # Computed from Coverage (L), Uniformity (M) and Phase purity (O). The
+    # workbook multiplies by its "1 - Uniformity" column (N) instead, which is
+    # itself a pasted literal; taking the complement of M here means N is never
+    # trusted, and because Z is built from N the cross-check below will fire if
+    # the two ever stop agreeing.
+    measurement:
+      recipe: product
+      inputs:
+        - {column: "Coverage"}
+        - {column: "Uniformity", transform: complement}
+        - {column: "Phase purity"}
+      # Z is a live formula, so it should agree to floating-point noise. It does:
+      # 0.0 difference on all 15 R0 rows.
+      cross_check:
+        - {column: "Uniformity score", atol: 1.0e-9}
     # fixed campaign scale, NOT recomputed per round; hypervolume would
     # otherwise be incomparable between rounds
     lower_anchor: 0.0
@@ -106,6 +127,22 @@ objectives:
     # correlation already on record (rho = -0.651, p = 0.009), not from the
     # search over mean shapes -- and it happens to win anyway.
     # Plain GP -0.342 (worse than the -0.148 null) -> structured +0.355.
+    #
+    # Computed as log10(P) + log10(Q), which is log10(P*Q) without an
+    # intermediate product that could overflow. Checked against both the live
+    # formula in R and the pasted literal in AA: a full-precision paste agrees to
+    # 1.8e-15 today, so a tight tolerance is what makes a stale paste audible.
+    # P and Q are confirmed never zero or blank for a measured film; if one ever
+    # is, the recipe errors rather than producing a silent -inf.
+    measurement:
+      recipe: log10_product
+      inputs:
+        - {column: "PL - Implied Voc (Max)"}
+        - {column: "Photoconductance (Max)"}
+      cross_check:
+        - {column: "Optoelectronic score", atol: 1.0e-9}
+        - column: "Log10 (Photoconductance (Max) x PL - Implied Voc (Max))"
+          atol: 1.0e-9
     mean_function:
       response: identity
       features:
@@ -128,10 +165,48 @@ objectives:
     # much here (+0.159, +0.187), the PAIR carries the signal. Do not assume
     # either shape generalises to a new objective.
     # Plain GP +0.183 -> structured +0.384.
+    #
+    # Computed as the mean of whichever of T1..T4 were measured -- nine R0 rows
+    # have two readings, three have three, three have four, so requiring all four
+    # would reject the campaign. Blank means not measured, never zero.
+    #
+    # "T anom" holds readings the operator judged anomalous (sample 4: 1618
+    # against its own 650/655/670/680; sample 14: 630). They never enter the mean;
+    # their presence is reported so the exclusion is visible rather than silent.
+    #
+    # X is ROUND(mean(T1..T4)), so it can legitimately differ by half a
+    # nanometre -- hence atol 0.5 rather than a tight tolerance. Against
+    # sigma = 176.8 nm that rounding moves the utility by under 1e-5.
+    #
+    # spread_warning_ratio fires on samples 8, 12 and 15, whose readings split
+    # into two clusters rather than scattering: sample 12 is 1600 and 709, and its
+    # recorded 1155 nm is the midpoint of the two. Sample 12 also carries the
+    # highest leverage in the design (0.462), so this is worth hearing about.
+    measurement:
+      recipe: mean_of_present
+      inputs:
+        - {column: "T1"}
+        - {column: "T2"}
+        - {column: "T3"}
+        - {column: "T4"}
+      excluded:
+        - {column: "T anom"}
+      cross_check:
+        - {column: "Thickness (avg)", atol: 0.5}
+      spread_warning_ratio: 0.25
     # response: log makes the model output lognormal, so the utility
     # expectation must use Gauss-Hermite quadrature, not the Gaussian closed
     # form -- moment-matching there is 506x less accurate and its bias changes
     # sign across the range, which reorders candidates.
+    #
+    # The three replicate films of one condition are averaged in LOG SPACE, for
+    # the same reason train_Yvar is pooled there: `response: log` means the GP
+    # trains on log(T), so the geometric mean is the arithmetic mean in the space
+    # the model actually works in. The difference from a plain mean is second
+    # order in the replicate spread -- under 0.1% at the ~3% spread most R0 rows
+    # show, about 14% on a film set as inconsistent as sample 12's. Change this
+    # one key if the group prefers the arithmetic mean of nanometres.
+    replicate_aggregate: mean_of_log
     mean_function:
       response: log
       features:
@@ -165,6 +240,43 @@ rounds:
     mc_samples: 128
     sequential_pending: true
 
+# What the batch-review artifact interrogates and states. Campaign knowledge, so
+# it lives here rather than in batch_review.py.
+review:
+  # A probe holds every other coordinate of each proposed candidate and forces one
+  # input to a value worth asking about. The sd comparison is the informative part:
+  # UCB rewards uncertainty, so a region the batch skips while the model still
+  # calls it uncertain is losing a trade-off, whereas a region the batch skips
+  # while the model calls it certain has been resolved -- possibly into an average.
+  probes:
+    - name: low-speed corner
+      column: speed_1
+      value: 1000
+      note: >
+        Samples 1 and 12 are the only two observations at speed_1 = 1000 and they
+        contradict each other: sample 1 has the higher concentration (1.4 against
+        1.1) but the thinner film (687 against 1155 nm), inverting the expected
+        relationship. Sample 12 also carries the highest leverage in the design
+        (0.462), and its 1155 nm is ROUND(mean(1600, 709)) -- two readings a factor
+        of 2.26 apart. So before this corner is read as a model conclusion, it is a
+        measurement question. `log(speed_2 + 1)` does not explain the inversion
+        (LOO R2 +0.449 -> -0.827); do not add it. See docs/GP_MODEL_DECISION.md.
+
+  notes:
+    - >
+      anneal_temp at or near 100 C in every proposed condition is the mean function
+      speaking, not a discovery. The optoelectronic objective carries a monotone
+      linear mean on anneal_temp with a negative slope (marginal rho = -0.651,
+      p = 0.009), and a monotone trend puts its optimum at a range edge by
+      construction. The open question is chemical: if the group would never anneal
+      below some temperature, that is a bound to declare in `constraints:` (which
+      is currently empty) rather than something to discover from a shipped batch.
+    - >
+      Uniformity is exploration-only. Nothing beat the leave-one-out null across
+      ~240 model configurations at N=15 (permutation p = 0.82), so its predicted
+      utility below carries no signal and should not be read as one. Whether that
+      is physics or measurement noise is answerable from the R1 replicates.
+
 local_penalization:
   distance_metric: normalized_euclidean
   dimension_weights: null
@@ -174,12 +286,27 @@ local_penalization:
 
 model:
   variant: dim_scaled_prior
-  # R0 has no replicates. Once R1 triplicates land, pool their within-condition
-  # variance (5 conditions x 2 dof = 10 dof) and pass it as train_Yvar. Pool
-  # thickness variance in NANOMETRES, matching what the GP trains on. Applying
-  # an R1-derived estimate to the R0 rows assumes the measurement process is
-  # unchanged between rounds; that assumption is recorded here deliberately
-  # rather than left implicit.
+  # R0 has no film replicates. Once R1 triplicates land, pool their
+  # within-condition variance (5 conditions x 2 dof = 10 dof) and pass it as
+  # train_Yvar.
+  #
+  # Pool thickness variance in LOG SPACE, not in nanometres: `response: log`
+  # above means the GP trains on log(T), so train_Yvar must be the variance of
+  # log(T). Passing a variance in nm^2 would be wrong by a factor of T^2 --
+  # roughly 1.3e5 at 360 nm and 1.7e6 at 1303 nm, so it is not even a constant
+  # rescaling across the observed range.
+  #
+  # The R0 rows are not entirely without a noise handle: each has 2-4 thickness
+  # points (T1..T4). Their pooled within-row variance of log(T) is 0.0593
+  # (sd 0.244, 24 dof), against a total observed log(T) span of 1.86. That is
+  # within-FILM spatial spread, not film-to-film reproducibility, so it is a
+  # floor on the noise rather than an estimate of it -- and it is dominated by
+  # three rows (samples 8, 12, 15 at sd_log 0.137-0.584; the other twelve are
+  # all under 0.048). Decide deliberately whether to use it for the R0 rows.
+  #
+  # Applying an R1-derived estimate to the R0 rows assumes the measurement
+  # process is unchanged between rounds; that assumption is recorded here
+  # deliberately rather than left implicit.
   observation_noise: fit_from_marginal_likelihood
 
 reproducibility:

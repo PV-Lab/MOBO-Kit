@@ -21,11 +21,18 @@ Writing beside the workbook keeps the experimentalist's one-button flow (they
 open the new file, fill it in, press the button again) and makes the read-only
 invariant structural rather than merely asserted.
 
-**Which columns to collect comes from the config, not from here.** Thickness
-trains on nanometres, not on its score, so ``R1_Candidates`` needs an entry
-column for ``Thickness (avg)``. Driving that off ``model_source_columns(config)``
-means a future objective change updates the sheet automatically instead of
-silently leaving the next round without its data.
+**Which columns to collect comes from the config, not from here.** Each
+objective's ``measurement`` block names the raw columns its value is computed
+from, so ``R1_Candidates`` asks for ``Coverage``, ``T1..T4`` and the rest rather
+than for the three derived scores. Driving that off the config means a future
+objective change updates the sheet automatically instead of silently leaving the
+next round without its data.
+
+**The derived scores are computed, not read.** Three of the workbook's score
+cells are pasted literals that do not update when the measurements behind them
+change, so :mod:`scores` recomputes all three and the stored cells become a
+cross-check that warns. That is why ``model_values`` is keyed by objective name
+and the stored cells appear separately as ``workbook_values``.
 
 **Round detection is fail-closed.** A partially scored sheet is refused with a
 plain sentence rather than being guessed at.
@@ -46,9 +53,22 @@ from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from .campaign import model_source_columns
+from .campaign import (
+    measurement_entry_columns,
+    measurement_specs,
+    model_source_columns,
+    objective_names,
+    replicate_aggregates,
+)
+from .scores import (
+    ScoreFinding,
+    ScoreSeverity,
+    compute_measurements,
+    row_completeness,
+)
 
 __all__ = [
+    "CandidateResults",
     "CandidateSheetError",
     "RoundState",
     "WorkbookContents",
@@ -56,6 +76,7 @@ __all__ = [
     "candidate_workbook_path",
     "detect_round",
     "read_campaign_workbook",
+    "read_candidate_results",
     "sheet_name_for_round",
     "workbook_digest",
     "write_candidate_sheet",
@@ -78,13 +99,35 @@ class WorkbookContents:
     inputs: pd.DataFrame
     """Physical input values, columns in the config's declared order."""
     model_values: pd.DataFrame
-    """The columns the GP trains on, in objective order."""
+    """What the GP trains on, one column per objective in objective order.
+
+    Computed from the raw measurement columns for any objective that declares a
+    ``measurement`` block; read from the declared column for one that does not.
+    """
+    workbook_values: pd.DataFrame
+    """The stored derived cells, as the workbook holds them. Cross-check only."""
+    inputs_used: pd.DataFrame
+    """How many measured inputs each value came from -- 2 to 4 for thickness."""
+    findings: tuple[ScoreFinding, ...]
+    """Cross-check mismatches, excluded readings and disagreeing replicates."""
     sample_ids: tuple[int, ...]
     digest: str
 
     @property
     def n_rows(self) -> int:
         return len(self.inputs)
+
+    @property
+    def errors(self) -> tuple[ScoreFinding, ...]:
+        from .scores import ScoreSeverity
+
+        return tuple(f for f in self.findings if f.severity is ScoreSeverity.ERROR)
+
+    @property
+    def warnings(self) -> tuple[ScoreFinding, ...]:
+        from .scores import ScoreSeverity
+
+        return tuple(f for f in self.findings if f.severity is ScoreSeverity.WARNING)
 
 
 @dataclass(frozen=True)
@@ -154,16 +197,22 @@ def read_campaign_workbook(
     positions = _header_positions(sheet)
 
     input_names = [item["name"] for item in config["inputs"]]
-    source_columns = list(model_source_columns(config))
+    specs = measurement_specs(config)
+    computed = [spec for spec in specs if spec is not None]
+    declared = list(model_source_columns(config))
+    names = list(objective_names(config))
+    required_entry, optional_entry = measurement_entry_columns(config)
+
     missing = [
         name
-        for name in [SAMPLE_COLUMN, *input_names, *source_columns]
+        for name in [SAMPLE_COLUMN, *input_names, *required_entry]
         if name not in positions
     ]
     if missing:
         raise CandidateSheetError(
             f"{SOURCE_SHEET} is missing required column(s): {missing}. "
-            "The optimizer trains on these, so it cannot proceed without them."
+            "The optimizer computes the objectives from these, so it cannot "
+            "proceed without them."
         )
 
     rows = []
@@ -177,24 +226,268 @@ def read_campaign_workbook(
     def column(name: str) -> list[Any]:
         return [row[positions[name]] for row in rows]
 
+    # every column any recipe or cross-check may look at, kept as raw cells:
+    # `scores` is the one place that knows how this workbook spells "not measured"
+    wanted: list[str] = [*required_entry, *optional_entry, *declared]
+    for spec in computed:
+        wanted.extend(check.column for check in spec.cross_checks)
+    raw = pd.DataFrame(
+        {
+            name: column(name)
+            for name in dict.fromkeys(wanted)
+            if name in positions
+        },
+        dtype=object,
+    )
+    sample_ids = tuple(int(value) for value in column(SAMPLE_COLUMN))
+
+    model_frame: dict[str, Any] = {}
+    findings: tuple[ScoreFinding, ...] = ()
+    inputs_used = pd.DataFrame(index=range(len(rows)))
+    if computed:
+        result = compute_measurements(raw, computed, sample_ids=sample_ids)
+        findings = result.findings
+        inputs_used = result.inputs_used
+        for name in result.values.columns:
+            model_frame[name] = result.values[name]
+    for name, spec, declared_column in zip(names, specs, declared):
+        if spec is None:
+            model_frame[name] = pd.to_numeric(
+                column(declared_column), errors="coerce"
+            )
+
     return WorkbookContents(
         inputs=pd.DataFrame(
             {name: pd.to_numeric(column(name), errors="coerce") for name in input_names}
         ),
-        model_values=pd.DataFrame(
+        model_values=pd.DataFrame({name: model_frame[name] for name in names}),
+        workbook_values=pd.DataFrame(
             {
                 name: pd.to_numeric(column(name), errors="coerce")
-                for name in source_columns
+                for name in dict.fromkeys(declared)
+                if name in positions
             }
         ),
-        sample_ids=tuple(int(value) for value in column(SAMPLE_COLUMN)),
+        inputs_used=inputs_used,
+        findings=findings,
+        sample_ids=sample_ids,
         digest=workbook_digest(path),
     )
 
 
+@dataclass(frozen=True)
+class CandidateResults:
+    """Measurements read back out of one round's candidate sheet.
+
+    The films of one condition are separate experimental rows but one design
+    point, so they are aggregated to a single observation before the next round
+    trains on them.  ``replicate_spread`` keeps the within-condition scatter that
+    aggregation discards -- that is the raw material for ``train_Yvar``.
+    """
+
+    round_name: str
+    conditions: pd.DataFrame
+    """One row per condition, input columns in the config's declared order."""
+    model_values: pd.DataFrame
+    """One row per condition, one column per objective. Aggregated."""
+    replicates: pd.DataFrame
+    """One row per film: candidate_id, replicate_index, then objective values."""
+    replicate_spread: pd.DataFrame
+    """Per-condition sd in each objective's aggregation space. NaN below 2 films."""
+    films_used: pd.DataFrame
+    """How many films each condition's value was aggregated from."""
+    findings: tuple[ScoreFinding, ...]
+    candidate_ids: tuple[str, ...]
+
+    @property
+    def n_conditions(self) -> int:
+        return len(self.conditions)
+
+    @property
+    def errors(self) -> tuple[ScoreFinding, ...]:
+        return tuple(f for f in self.findings if f.severity is ScoreSeverity.ERROR)
+
+
+def _aggregate(values: np.ndarray, rule: str) -> tuple[float, float]:
+    """Collapse one condition's film values to (observation, spread).
+
+    Spread is the sample sd in the aggregation space, so for ``mean_of_log`` it
+    is a sd of ``log`` values and is already what a log-space ``train_Yvar``
+    wants.  It is NaN for a single film, which is honest: one film measures no
+    reproducibility at all.
+    """
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return float("nan"), float("nan")
+    if rule == "mean_of_log":
+        if np.any(finite <= 0):
+            raise CandidateSheetError(
+                "mean_of_log aggregation needs strictly positive values; got "
+                f"{finite.tolist()}."
+            )
+        logs = np.log(finite)
+        spread = float(np.std(logs, ddof=1)) if finite.size > 1 else float("nan")
+        return float(np.exp(logs.mean())), spread
+    spread = float(np.std(finite, ddof=1)) if finite.size > 1 else float("nan")
+    return float(finite.mean()), spread
+
+
+def read_candidate_results(
+    path: str | Path, config: Mapping[str, Any], round_name: str
+) -> CandidateResults:
+    """Read a filled-in candidate sheet and aggregate it to design points.
+
+    ``path`` is the SOURCE workbook; the candidate sheet is found beside it, the
+    same way :func:`write_candidate_sheet` put it there.  Objective values are
+    computed per film by :mod:`scores` -- the same recipes the source sheet uses,
+    so R0 and R1 observations are commensurable -- and then aggregated per
+    ``replicate_group``.
+    """
+    candidate_path = candidate_workbook_path(path, round_name)
+    if not candidate_path.exists():
+        raise CandidateSheetError(
+            f"{candidate_path.name} does not exist, so there are no {round_name} "
+            "measurements to read."
+        )
+    sheet_name = sheet_name_for_round(round_name)
+    workbook = load_workbook(candidate_path, data_only=True)
+    if sheet_name not in workbook.sheetnames:
+        raise CandidateSheetError(
+            f"{candidate_path.name} has no {sheet_name!r} sheet; found "
+            f"{workbook.sheetnames}."
+        )
+    sheet = workbook[sheet_name]
+    positions = _header_positions(sheet)
+
+    input_names = [item["name"] for item in config["inputs"]]
+    names = list(objective_names(config))
+    specs = [spec for spec in measurement_specs(config) if spec is not None]
+    rules = list(replicate_aggregates(config))
+    required_entry, optional_entry = measurement_entry_columns(config)
+
+    missing = [
+        column
+        for column in ["candidate_id", *input_names, *required_entry]
+        if column not in positions
+    ]
+    if missing:
+        raise CandidateSheetError(
+            f"{candidate_path.name} is missing column(s) {missing}. It was "
+            "probably created by an older version; regenerate it."
+        )
+
+    rows = [
+        row
+        for row in sheet.iter_rows(min_row=2, values_only=True)
+        if row[positions["candidate_id"]] is not None
+    ]
+    if not rows:
+        raise CandidateSheetError(f"{sheet_name} contains no candidate rows.")
+
+    def column(name: str) -> list[Any]:
+        return [row[positions[name]] for row in rows]
+
+    group_column = "replicate_group" if "replicate_group" in positions else "candidate_id"
+    groups = [str(value) for value in column(group_column)]
+    film_labels = [str(value) for value in column("candidate_id")]
+
+    wanted = [*required_entry, *optional_entry]
+    for spec in specs:
+        wanted.extend(check.column for check in spec.cross_checks)
+    raw = pd.DataFrame(
+        {name: column(name) for name in dict.fromkeys(wanted) if name in positions},
+        dtype=object,
+    )
+    per_film = compute_measurements(raw, specs, sample_ids=film_labels)
+    findings = list(per_film.findings)
+
+    inputs = pd.DataFrame(
+        {name: pd.to_numeric(column(name), errors="coerce") for name in input_names}
+    )
+
+    ordered_groups = list(dict.fromkeys(groups))
+    group_index = pd.Series(groups)
+
+    condition_rows: list[dict[str, float]] = []
+    value_rows: list[dict[str, float]] = []
+    spread_rows: list[dict[str, float]] = []
+    count_rows: list[dict[str, int]] = []
+    for group in ordered_groups:
+        mask = (group_index == group).to_numpy()
+        block = inputs.loc[mask]
+        first = block.iloc[0]
+        for name in input_names:
+            if not np.allclose(
+                block[name].to_numpy(dtype=float), float(first[name]), equal_nan=True
+            ):
+                raise CandidateSheetError(
+                    f"The films of {group} do not share the same {name}. Replicates "
+                    "must be the same recipe; edit the sheet or regenerate it."
+                )
+        condition_rows.append({name: float(first[name]) for name in input_names})
+
+        values: dict[str, float] = {}
+        spreads: dict[str, float] = {}
+        counts: dict[str, int] = {}
+        for name, rule in zip(names, rules):
+            film_values = per_film.values.loc[mask, name].to_numpy(dtype=float)
+            observation, spread = _aggregate(film_values, rule)
+            values[name] = observation
+            spreads[name] = spread
+            counts[name] = int(np.isfinite(film_values).sum())
+            if counts[name] == 0:
+                findings.append(
+                    ScoreFinding(
+                        severity=ScoreSeverity.ERROR,
+                        code="condition_has_no_usable_film",
+                        objective=name,
+                        row_position=ordered_groups.index(group),
+                        sample_id=group,
+                        message=(
+                            f"none of the {int(mask.sum())} films of {group} produced "
+                            f"a usable {name} value."
+                        ),
+                    )
+                )
+        value_rows.append(values)
+        spread_rows.append(spreads)
+        count_rows.append(counts)
+
+    replicates = pd.DataFrame(
+        {
+            "candidate_id": film_labels,
+            "replicate_group": groups,
+            **(
+                {"replicate_index": pd.to_numeric(column("replicate_index"))}
+                if "replicate_index" in positions
+                else {}
+            ),
+            **{name: per_film.values[name] for name in names},
+        }
+    )
+
+    return CandidateResults(
+        round_name=round_name.upper(),
+        conditions=pd.DataFrame(condition_rows, columns=input_names),
+        model_values=pd.DataFrame(value_rows, columns=names),
+        replicates=replicates,
+        replicate_spread=pd.DataFrame(spread_rows, columns=names),
+        films_used=pd.DataFrame(count_rows, columns=names),
+        findings=tuple(findings),
+        candidate_ids=tuple(ordered_groups),
+    )
+
+
 def detect_round(path: str | Path, config: Mapping[str, Any]) -> RoundState:
-    """Decide which round to generate. Fail closed on a partial sheet."""
-    source_columns = list(model_source_columns(config))
+    """Decide which round to generate. Fail closed on a partial sheet.
+
+    "Measured" is a per-objective question once objectives are computed rather
+    than read: ``product`` and ``log10_product`` need every input, while
+    thickness needs only one of ``T1..T4``. Requiring all four would report a
+    finished sheet as partial -- nine of the fifteen R0 rows have two readings.
+    """
+    specs = [spec for spec in measurement_specs(config) if spec is not None]
+    required_entry, optional_entry = measurement_entry_columns(config)
 
     for round_name, following in (("R1", "R2"), ("R2", None)):
         candidate_path = candidate_workbook_path(path, round_name)
@@ -205,7 +498,7 @@ def detect_round(path: str | Path, config: Mapping[str, Any]) -> RoundState:
             sheet_name_for_round(round_name)
         ]
         positions = _header_positions(sheet)
-        missing = [c for c in source_columns if c not in positions]
+        missing = [c for c in required_entry if c not in positions]
         if missing:
             raise CandidateSheetError(
                 f"{name} is missing entry column(s) {missing}. It was probably "
@@ -216,15 +509,28 @@ def detect_round(path: str | Path, config: Mapping[str, Any]) -> RoundState:
             for row in sheet.iter_rows(min_row=2, values_only=True)
             if any(value is not None for value in row)
         ]
-        filled = [
-            all(row[positions[c]] is not None for c in source_columns) for row in data
-        ]
+        if specs:
+            frame = pd.DataFrame(
+                {
+                    entry: [row[positions[entry]] for row in data]
+                    for entry in dict.fromkeys((*required_entry, *optional_entry))
+                    if entry in positions
+                },
+                dtype=object,
+                index=range(len(data)),
+            )
+            filled = list(row_completeness(frame, specs))
+        else:
+            filled = [
+                all(row[positions[c]] is not None for c in required_entry)
+                for row in data
+            ]
         scored, total = sum(filled), len(filled)
         if total and scored == 0:
             return RoundState(
                 None,
                 f"{name} exists but no results have been entered yet. Run those "
-                f"{total} conditions and fill in {', '.join(source_columns)}.",
+                f"{total} conditions and fill in {', '.join(required_entry)}.",
                 scored,
                 total,
             )
@@ -265,8 +571,12 @@ def write_candidate_sheet(
     """Write this round's worklist to a sibling workbook.
 
     One row per physical film, three per condition sharing a ``replicate_group``.
-    Measurement columns are left blank and highlighted for entry -- including
-    thickness in nanometres, which the next round trains on directly.
+    Measurement columns are left blank and highlighted for entry -- the raw
+    columns each objective is computed from, not the derived scores, because the
+    scores are now computed in Python.
+
+    Optional entry columns (``T3``, ``T4``, ``T anom``) are offered but not
+    demanded: a film with two thickness readings is complete.
 
     The source workbook is opened read-only and its Sheet1 digest is checked
     afterwards, so the guarantee is enforced rather than assumed.
@@ -288,14 +598,15 @@ def write_candidate_sheet(
     workbook.remove(workbook.active)
 
     input_names = [item["name"] for item in config["inputs"]]
-    source_columns = list(model_source_columns(config))
+    required_entry, optional_entry = measurement_entry_columns(config)
+    entry_names = [*required_entry, *optional_entry]
     headers = [
         "candidate_id",
         "replicate_group",
         "replicate_index",
         "round",
         *input_names,
-        *source_columns,
+        *entry_names,
     ]
 
     sheet = workbook.create_sheet(sheet_name)
@@ -303,7 +614,7 @@ def write_candidate_sheet(
     for cell in sheet[1]:
         cell.font = HEADER_FONT
 
-    entry_start = len(headers) - len(source_columns) + 1
+    entry_start = len(headers) - len(entry_names) + 1
     for index, (_, condition) in enumerate(conditions.iterrows(), start=1):
         candidate_id = f"{round_name.upper()}_C{index:02d}"
         for replicate in range(1, replicates + 1):
@@ -316,7 +627,7 @@ def write_candidate_sheet(
                     *[float(condition[name]) for name in input_names],
                 ]
             )
-            for offset in range(len(source_columns)):
+            for offset in range(len(entry_names)):
                 sheet.cell(row=sheet.max_row, column=entry_start + offset).fill = (
                     ENTRY_FILL
                 )

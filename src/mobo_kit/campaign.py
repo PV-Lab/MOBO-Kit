@@ -44,6 +44,7 @@ from .lhs import lhs_dataframe_optimized
 from botorch.models.model_list_gp_regression import ModelListGP
 
 from .model_validation import fit_model_variant, model_variant_spec
+from .scores import MeasurementSpec, entry_columns, measurement_spec_from_config
 from .structured_mean import build_structured_mean, mean_spec_from_config
 from .objectives import ObjectiveSpec, ObjectiveTransform
 from .qlognehvi_batch import propose_qlognehvi_penalized_batch
@@ -58,7 +59,15 @@ __all__ = [
     "RoundResult",
     "build_objective_transform",
     "expand_replicates",
+    "fit_campaign_models",
     "load_campaign_config",
+    "normalise_inputs",
+    "measurement_entry_columns",
+    "measurement_specs",
+    "model_source_columns",
+    "objective_names",
+    "replicate_aggregates",
+    "REPLICATE_AGGREGATES",
     "run_r0_lhs",
     "run_r1_ucb",
     "run_r2_qlognehvi",
@@ -222,8 +231,87 @@ def build_objective_transform(config: Mapping[str, Any]) -> ObjectiveTransform:
 
 
 def model_source_columns(config: Mapping[str, Any]) -> tuple[str, ...]:
-    """The workbook columns the GP trains on, in objective order."""
+    """The workbook column declared per objective, in objective order.
+
+    For an objective with a ``measurement`` block this is no longer what the GP
+    trains on -- the value is computed from the raw measurement columns instead,
+    and this column becomes the cross-check target.  See :mod:`scores`.
+    """
     return tuple(spec.source_column for spec in _objective_specs(config))
+
+
+def objective_names(config: Mapping[str, Any]) -> tuple[str, ...]:
+    """Objective names in declaration order."""
+    return tuple(spec.name for spec in _objective_specs(config))
+
+
+#: How the replicate films of one condition become one training observation.
+#: ``mean`` is the arithmetic mean of the film values.  ``mean_of_log`` is the
+#: geometric mean, which is the arithmetic mean *in the space the GP trains in*
+#: whenever that objective's mean function declares ``response: log``.
+REPLICATE_AGGREGATES = frozenset({"mean", "mean_of_log"})
+
+
+def replicate_aggregates(config: Mapping[str, Any]) -> tuple[str, ...]:
+    """The replicate-aggregation rule per objective, in objective order.
+
+    Declared per objective because the right answer depends on the space the
+    model works in, not on taste.  Thickness trains on ``log T``, so averaging
+    three films in log space is what makes the aggregation and the Phase 4
+    variance pooling consistent with each other; the other two objectives train
+    on their own scale and use the plain mean.
+
+    The difference is second order in the replicate spread -- under 0.1% at the
+    3% within-film spread most R0 rows show, but around 14% on a film set as
+    inconsistent as sample 12's.  It is one config key, so it can be revisited
+    without touching code.
+    """
+    specs = _objective_specs(config)
+    entries = config["objectives"]["specs"]
+    rules: list[str] = []
+    for spec, entry in zip(specs, entries):
+        rule = str(entry.get("replicate_aggregate", "mean"))
+        if rule not in REPLICATE_AGGREGATES:
+            raise CampaignConfigError(
+                f"Objective {spec.name!r} declares replicate_aggregate {rule!r}; "
+                f"expected one of {sorted(REPLICATE_AGGREGATES)}."
+            )
+        rules.append(rule)
+    return tuple(rules)
+
+
+def measurement_specs(
+    config: Mapping[str, Any],
+) -> tuple[MeasurementSpec | None, ...]:
+    """One measurement spec per objective, in objective order.
+
+    ``None`` for an objective that has no ``measurement`` block and therefore
+    still reads its stored column as-is.
+    """
+    specs = _objective_specs(config)  # validates the objectives block first
+    entries = config["objectives"]["specs"]
+    return tuple(
+        measurement_spec_from_config(entry) for _, entry in zip(specs, entries)
+    )
+
+
+def measurement_entry_columns(
+    config: Mapping[str, Any],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Columns a worklist sheet must offer for entry, split required / optional.
+
+    Objectives with a ``measurement`` block contribute their raw measurement
+    columns; objectives without one contribute their declared source column.
+    """
+    specs = measurement_specs(config)
+    declared = model_source_columns(config)
+    required, optional = entry_columns([s for s in specs if s is not None])
+    extra = tuple(
+        column
+        for spec, column in zip(specs, declared)
+        if spec is None and column not in required
+    )
+    return required + extra, tuple(c for c in optional if c not in extra)
 
 
 def _reference_point(config: Mapping[str, Any], n_objectives: int) -> np.ndarray:
@@ -452,11 +540,50 @@ def _fit_models(
     return ModelListGP(*models)
 
 
+def fit_campaign_models(
+    config: Mapping[str, Any],
+    X_phys: np.ndarray,
+    Y_raw: np.ndarray,
+    *,
+    seed: int | None = None,
+) -> Any:
+    """Fit one GP per objective exactly as a round does.
+
+    Same normalisation, same structured means, same variant, same seeding -- so
+    calling this with the data and seed a round used reproduces that round's model
+    bit for bit.  That is what makes a review of a proposed batch a review of the
+    model that proposed it, rather than of a similar one.
+
+    ``Y_raw`` holds the MODEL SOURCE values in objective order, the same contract
+    as :func:`run_r1_ucb`.
+    """
+    design = build_design_from_config(dict(config))
+    resolved_seed = (
+        int(config.get("reproducibility", {}).get("seed", 0)) if seed is None else seed
+    )
+    values = np.asarray(X_phys, dtype=float)
+    return _fit_models(
+        config, values, _normalise(design, values), Y_raw, resolved_seed
+    )
+
+
 def _normalise(design: Design, X_phys: np.ndarray) -> np.ndarray:
     lowers = np.asarray(design.lowers, dtype=float)
     uppers = np.asarray(design.uppers, dtype=float)
     span = np.where(uppers > lowers, uppers - lowers, 1.0)
     return (np.asarray(X_phys, dtype=float) - lowers) / span
+
+
+def normalise_inputs(
+    config: Mapping[str, Any], X_phys: np.ndarray
+) -> np.ndarray:
+    """Physical inputs to ``[0, 1]`` against the CONFIG GRID bounds.
+
+    Not against the observed range: a model fitted on config bounds and evaluated
+    on observed-range coordinates is being asked about different points than it
+    was told about, and nothing errors.
+    """
+    return _normalise(build_design_from_config(dict(config)), X_phys)
 
 
 def _on_grid_mask(design: Design, X_phys: np.ndarray) -> np.ndarray:
