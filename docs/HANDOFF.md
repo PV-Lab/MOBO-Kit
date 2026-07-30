@@ -18,7 +18,10 @@ Then verify the state yourself in one command:
 pytest -q
 ```
 
-Expect **280 passed, 0 failed** (~105 s). If that holds, everything below is true.
+Expect **387 passed, 0 failed** (~65 s). If that holds, everything below is true.
+
+Two of those tests open a real tkinter window and drive it; they skip themselves
+if there is no display.
 
 ## What works
 
@@ -41,34 +44,55 @@ measurement becomes a utility), and new orchestration on top.
 
 ## Open issues, in the order I would work them
 
-1. **Wire the launcher.** `workbook_io.py` has the reader, round detection and
-   candidate writer. What is missing is the double-click `.bat` / `.command` and
-   the small tkinter window. No dependency on anything else here.
-2. **Compute the three objectives from the literal measurement columns**
-   (L/N/O, P/Q, X) and demote the formula columns to a cross-check that warns on
-   disagreement. This matters: column AA is a **pasted literal, not a formula**,
-   so it silently will not update if P or Q are edited — the same failure that
-   produced the original uniformity discrepancy. Audit AB too.
+1. ~~Wire the launcher.~~ **Done 2026-07-30.** `launcher.py` plus
+   `launch_mobo_kit.bat` / `.command`. The handoff said this had "no dependency on
+   anything else here" and that was wrong: nothing read a filled-in candidate
+   sheet back, so R1 → R2 could not advance. `workbook_io.read_candidate_results`
+   now does, aggregating each condition's films to one observation — thickness in
+   log space, matching what the GP trains on. Details in `CAMPAIGN_STATUS.md`,
+   "Reading a round's results back". The window itself is a shell over
+   `inspect_campaign` / `gather_observations` / `generate_next_round`, which are
+   tested headlessly.
+2. ~~Compute the three objectives from the measurement columns.~~ **Done
+   2026-07-30.** `src/mobo_kit/scores.py` computes them from `Coverage`/
+   `Uniformity`/`Phase purity`, `PL`/`Photoconductance` and `T1..T4`; the stored
+   score cells are now cross-checks that warn. The audit that motivated it, the
+   agreement numbers, and why `Y`/`AB` are deliberately *not* cross-checked are in
+   `CAMPAIGN_STATUS.md` issue 2. Two consequences worth carrying forward:
+   thickness now reaches the GP **unrounded** (663.75 rather than 664), and the
+   R1 candidate sheet asks for raw measurements instead of derived scores, so an
+   R1 sheet generated before this date has the wrong columns — regenerate it.
 3. **The unexplained 0.089 on optoelectronic.** Two implementations of one
    pipeline on the same 15 rows give LOO R² +0.355 and +0.267. Ruled out: the
    mean feature, sampling noise, the standardization scale. Untested: MLL
    optimiser seeding, and the residual-vs-target training interaction. Both
    numbers beat plain (−0.342), so the direction is safe; close the gap before
    acting on optoelectronic candidates.
-4. **Human review of a proposed batch.** Print the five conditions in physical
-   units with predicted objectives, uncertainties, and distance to the nearest R0
-   point. Fifteen films is a real cost and nobody has looked yet. One thing to
-   watch: whether anything lands near `speed_1 = 1000`, a region holding two
-   observations that contradict each other.
+4. **The review artifact is built (2026-07-30); the human review is still owed.**
+   `batch_review.py` writes a `Review` sheet beside the worklist and echoes it into
+   the launcher. What it reported on the R0-trained batch, and why the
+   `speed_1 = 1000` avoidance turned out to be the mean function extrapolating
+   rather than a local average, is in `CAMPAIGN_STATUS.md` issue 4. Someone still
+   has to read it and decide — that part is not automatable and is not automated.
 5. **Replicate variance into `train_Yvar`** (needs R1 measurements, so it is
-   gated on the batch shipping). Two decisions to make in config *now*, not when
-   the data arrives: pool thickness variance in **log space** (`response: log`
-   means the GP trains on log T), and decide the policy for the R0 rows, which
-   have no replicates.
-6. **`metrics.compute_ref_pareto_hv` has a degenerate auto-reference** —
-   `mins - 1e-8` gives HV 6e-8 against 1.448 from BoTorch's
-   `infer_reference_point`. Only the `ref_point_np=None` path. Any new plotting
-   code must pass a fixed reference, or an HV-vs-round curve is meaningless.
+   gated on the batch shipping). Both config decisions are now made and recorded:
+   thickness variance pools in **log space**, and
+   `read_candidate_results().replicate_spread` already returns it there. What is
+   left is passing it to the model and deciding the R0 policy — the R0 rows have
+   no replicate films, but they do have 2-4 thickness points each, pooling to a
+   within-row sd of `log T` of 0.244 over 24 dof. That is within-film spread, not
+   film-to-film, so it is a floor rather than an estimate.
+6. ~~`metrics.compute_ref_pareto_hv` has a degenerate auto-reference.~~ **Done
+   2026-07-30.** The `ref_point_np=None` path is gone: a missing reference now
+   raises and names `reference_point_utility`. The same function also refuses a
+   reference nothing dominates, rather than reporting the 0.0 that BoTorch's
+   silent point-dropping would produce. `main.py` already passed an explicit
+   reference and is unaffected; the demo notebook had one bare call, now fixed.
+   Note for whoever reads the old issue text: `mins - 1e-8` is harmless while a
+   *dominated* point sets the per-objective minima, and collapses as soon as the
+   Pareto set itself does — which is what a real trade-off front looks like.
+   `tests/test_metrics.py` pins that condition; there were **no tests at all** on
+   this function before, which is how it survived.
 
 ## Things not to redo
 
@@ -117,6 +141,19 @@ been replaced. Recover any of it with:
 git show pre-cleanup-2026-07-29:src/mobo_kit/<file>.py
 git show pre-cleanup-2026-07-29:docs/STEP2C_ROBUSTNESS_HANDOFF.md
 ```
+
+Two files there are worth knowing about rather than rediscovering:
+
+- `src/mobo_kit/d2d_scores.py` — the three objective formulas computed from raw
+  measurement columns, with per-row tolerance comparison and warning/error
+  severities. It is open issue 2 already written, with the polarity inverted.
+- `docs/D2D_CAMPAIGN_SPEC.md` — the Step 1 data contract, deleted 2026-07-29.
+  Its input grid and on-grid rules now live in `configs/` and are enforced by
+  `design.py` and `campaign.validate_batch`; its thirteen "unresolved decisions
+  blocking real R1" are resolved in the config; and its workbook audit described
+  a revision of `Summary Table.xlsx` that no longer matches the file (it reports
+  duplicate `Uniformity score` headers at Q/T, which the current workbook does
+  not have). Recover with `git show 19591cc:docs/D2D_CAMPAIGN_SPEC.md`.
 
 ## Working advice
 

@@ -28,16 +28,44 @@ Each returns a `RoundResult` with:
 
 ## What `Y_model` must contain
 
-**Not the three final scores.** Column order comes from
-`model_source_columns(config)`, currently:
+**Not the three stored score columns.** Since 2026-07-30 the objectives are
+computed in Python from the raw measurement columns, and the stored cells are a
+cross-check. Column order comes from `objective_names(config)`:
 
 ```
-("Uniformity score", "Optoelectronic score", "Thickness (avg)")
+("uniformity", "optoelectronic", "thickness")
 ```
 
-Thickness is in **nanometres**, because the GP trains on the raw measurement and
-the 650 nm Gaussian is applied to the posterior. See `GP_MODEL_DECISION.md` for
-why. Anything that collects data for the next round must collect nm.
+`read_campaign_workbook` returns exactly that as `contents.model_values`, so the
+normal path is:
+
+```python
+from mobo_kit.workbook_io import read_campaign_workbook
+
+contents = read_campaign_workbook("local_inputs/Summary Table.xlsx", config)
+X_phys = contents.inputs.to_numpy(float)
+Y_model = contents.model_values.to_numpy(float)     # objective order
+assert contents.errors == ()                        # fail closed before fitting
+```
+
+Each value comes from a recipe declared in config (`objectives.specs[].measurement`):
+
+| objective | recipe | from |
+|---|---|---|
+| uniformity | `product` | `Coverage`, `1 - Uniformity` (computed), `Phase purity` |
+| optoelectronic | `log10_product` | `PL - Implied Voc (Max)`, `Photoconductance (Max)` |
+| thickness | `mean_of_present` | whichever of `T1..T4` were measured |
+
+Thickness is in **nanometres**, unrounded, because the GP trains on the raw
+measurement and the 650 nm Gaussian is applied to the posterior. See
+`GP_MODEL_DECISION.md` for why. Anything that collects data for the next round
+must collect nm.
+
+`contents.findings` carries what the read noticed: cross-check mismatches,
+readings the operator excluded, and films whose thickness readings disagree.
+`contents.errors` is empty on the R0 rows; if it ever is not, do not fit.
+`contents.inputs_used` records how many readings each value came from, which is
+what Phase 4 needs to turn a spread into an observation variance.
 
 ## For the plotting work
 
@@ -45,11 +73,15 @@ why. Anything that collects data for the next round must collect nm.
 evaluate on a 2-D grid with the other eight inputs held fixed:
 
 ```python
-from mobo_kit.campaign import _fit_models, build_objective_transform, _normalise
-from mobo_kit.design import build_design_from_config
+from mobo_kit.campaign import (
+    build_objective_transform,
+    fit_campaign_models,
+    normalise_inputs,
+)
 
-design = build_design_from_config(config)
-model = _fit_models(config, X_phys, _normalise(design, X_phys), Y_model, seed=73)
+# same normalisation, structured means, variant and seeding as the round itself,
+# so this reproduces the round's model rather than a similar one
+model = fit_campaign_models(config, X_phys, Y_model, seed=73)
 
 model.eval()
 with torch.no_grad():
@@ -64,7 +96,9 @@ Two things to respect when turning that into a utility surface:
   transforming the mean yourself; it dispatches per objective and integrates the
   lognormal by quadrature where needed.
 * inputs are normalised to `[0,1]` against the config grid bounds, not the
-  observed range. `_normalise(design, X_phys)` is the conversion.
+  observed range. `normalise_inputs(config, X_phys)` is the conversion. A model
+  fitted on config bounds and evaluated on observed-range coordinates is being
+  asked about different points than it was told about, and nothing errors.
 
 **Round-comparison plot.** Keep each `RoundResult` and plot `conditions` per
 round on shared axes (R0 grey / R1 blue / R2 orange), plus per-round
@@ -88,6 +122,37 @@ Validated on the 15 R0 observations, exact leave-one-out, null R2 = -0.148:
 
 Uniformity is exploration-only by measurement, not by choice. The interface must
 not imply the model knows more than it does about it.
+
+## Reading a round's results back
+
+`read_candidate_results(source_workbook, config, "R1")` reads the filled-in
+candidate sheet and returns design points, not films:
+
+| field | contents |
+|---|---|
+| `conditions` | one row per condition, input columns |
+| `model_values` | one row per condition, objective columns, **aggregated** |
+| `replicates` | one row per film, with its own objective values |
+| `replicate_spread` | per-condition sd, in each objective's aggregation space |
+| `films_used` | how many films each observation was aggregated from |
+| `findings` | the same note / warning / error list as the source read |
+
+Objective values are computed per film with the same recipes Sheet1 uses, so R0
+and R1 observations are commensurable, and only then aggregated per
+`replicate_group`.
+
+**Thickness aggregates in log space** (`replicate_aggregate: mean_of_log`), because
+`response: log` means the GP trains on `log T` — the geometric mean is the
+arithmetic mean in the space the model works in, and it is the choice consistent
+with pooling `train_Yvar` in log space. The difference from a plain mean is second
+order in the replicate spread: under 0.1% at the ~3% spread most R0 rows show,
+about 14% on a film set as inconsistent as sample 12's. It is one config key per
+objective if the group prefers otherwise.
+
+`replicate_spread` is the raw material for open issue 5 and is already in the right
+space: a sd of `log T` for thickness, a sd of the value itself for the other two.
+It is NaN for a single film, which is honest — one film measures no
+reproducibility at all.
 
 ## Synthetic acceptance test
 
@@ -144,13 +209,51 @@ Two conventions that fail *silently* if got wrong, both now covered:
    better than plain (-0.342), so the direction is not in doubt -- but the gap
    should be closed before optoelectronic candidates are acted on.
 
-2. **`Optoelectronic score` (column AA) is a pasted literal, not a formula.**
-   R2 holds `=LOG(P2*Q2)`; AA holds a frozen copy of its value. Editing P or Q
-   will not update AA. This is the same failure that produced the original
-   uniformity discrepancy. The fix is to compute all three objectives in Python
-   from the literal measurement columns (L/N/O, P/Q, X) and demote the formula
-   columns to a cross-check that warns on disagreement. Not yet done. Column AB
-   deserves the same audit.
+2. **Done, 2026-07-30 — kept here because the audit is the evidence for how the
+   objectives are now computed.** Three of the workbook's derived columns are
+   pasted literals, not formulas. Audited on all 15 rows, 2026-07-29:
+
+   | col | quantity | kind | agrees with recomputation |
+   |---|---|---|---|
+   | `Z` | `Uniformity score` | formula `=L2*N2*O2` | exactly |
+   | `R` | `log10(P*Q)` | formula `=LOG(P2*Q2)` | 1.8e-15 |
+   | `AA` | `Optoelectronic score` | **literal**, copy of R | 1.8e-15 |
+   | `Y` | `Normalized thickness` | formula on **X** | — |
+   | `AB` | `Thickness score` | **literal**, from the **unrounded** T mean | 4.8e-10 |
+   | `X` | `Thickness (avg)` | **literal**, `ROUND(mean(T1..T4))` | 0.5 nm |
+
+   Two things this changes. First, **`AB` is not a copy of `Y`**: `Y` evaluates
+   the Gaussian on the rounded `X`, while `AB` was pasted from the same Gaussian
+   on the unrounded T1..T4 mean. They disagree by up to **1.7e-3** already
+   (sample 8: 0.651997 against 0.653702). The campaign path reads neither -- it
+   trains on `X` -- so this is harmless there. `scripts/gp_diagnostic.py` does read
+   `AB` (its `OBJECTIVE_COLS` are Z/AA/AB), where 1.7e-3 is immaterial to a
+   variant comparison. Harmless either way today, but it is the same silent
+   divergence that produced the original uniformity discrepancy, sitting in the
+   file right now.
+
+   Second, **the column the GP trains on is itself derived and rounded.** `X` is
+   `mean(T1..T4)` rounded to whole nanometres (sample 4: 663.75 -> 664; sample
+   12: 1154.5 -> 1155). Against `sigma = 176.8` nm a 0.5 nm error moves the
+   utility by under 1e-5, so this is immaterial numerically. It is worth knowing
+   that no raw measurement column feeds the model directly.
+
+   **What was done.** `src/mobo_kit/scores.py` computes all three objectives from
+   the measurement columns; `Z`, `R` and `X` became cross-checks that warn on
+   disagreement, with a per-column tolerance because a live formula and a
+   deliberately rounded literal do not deserve the same one. On the R0 rows the
+   recomputation reproduces `Z` to 1.1e-16, `AA`/`R` to 1.8e-15, and `X` to the
+   0.5 nm its rounding allows, so nothing about the campaign's numbers changed
+   except that thickness is now unrounded. The formulas came from
+   `git show pre-cleanup-2026-07-29:src/mobo_kit/d2d_scores.py` with the polarity
+   inverted.
+
+   **`Y` and `AB` are deliberately not cross-checked.** They live in utility
+   space, and a check would have to duplicate the Gaussian that `objectives.py`
+   owns. Nothing reads them now, so there is no dependency to protect — the
+   1.7e-3 divergence above is recorded rather than monitored. If a future reader
+   ever needs them, check them through `ObjectiveTransform.transform` rather than
+   re-implementing the transform in `scores.py`.
 
 3. **openpyxl discards cached formula values on save.** Verified: Z2:Z4 read
    `[0.657, 0.587, 0.561]` before a save that only added an empty sheet, and
@@ -158,22 +261,86 @@ Two conventions that fail *silently* if got wrong, both now covered:
    sibling file and never opens the source for writing. Do not "simplify" that
    by adding sheets to `Summary Table.xlsx`.
 
-4. **No batch has been reviewed by a human.** Boundary counts and pairwise
-   distances look healthy ([3,4,2,2,2], min 0.921), but nobody has inspected the
-   five proposed conditions in physical units. Fifteen films is a real cost.
-   One specific thing to look for: whether anything lands near
-   `speed_1 = 1000`, a region with two contradictory observations in it.
+4. **Done 2026-07-30 — the review artifact exists; the human review itself is
+   still owed.** `batch_review.py` writes a `Review` sheet into the candidate
+   workbook and echoes it into the launcher pane: proposed conditions in physical
+   units, predicted utility and sd per objective through the acquisition's own
+   posterior-sample path, the prediction decoded into the measurement's units
+   (median plus a 68% interval, multiplicative for the log-link thickness),
+   normalised distance to the nearest observed point, and which coordinates sit at
+   a range edge rather than only how many. Findings from Sheet1 travel with it, so
+   the sheet can be forwarded on its own.
 
-5. **`metrics.compute_ref_pareto_hv` has a degenerate auto-reference.** When
-   `ref_point_np=None` it uses `mins - 1e-8`, essentially the nadir itself, so
-   every slab is 1e-8 thick: measured HV 6e-8 against 1.448 from BoTorch's
-   `infer_reference_point` on the same data. It also recomputes the reference
-   from the current data each call, so hypervolumes are not comparable across
-   iterations. The production path passes an explicit reference and is
-   unaffected; any new plotting code must do the same.
+   **What the first artifact said about the R0-trained batch**, on the two flags
+   raised earlier:
 
-6. **Not started:** the tkinter launcher, replicate-variance pooling into
-   `train_Yvar` (Phase 4), and removal of the legacy Step 2C debug ceremony.
+   * `speed_1 = 1000` — the declared probe moves each candidate to the corner and
+     compares. Thickness utility falls from 0.786 to 0.223 while the sd ratio is
+     **1.02**: the region is not being skipped as unexplored, it is being skipped
+     as known and bad. `speed_1` is a feature of the thickness mean function, so
+     that confidence is a fitted global trend extrapolating to its range edge, not
+     a local average of samples 1 and 12 — and the two points anchoring that edge
+     disagree, one of them (sample 12) holding `ROUND(mean(1600, 709))`. So the
+     corner is a measurement question, as suspected, but by a different route than
+     "the contradiction was averaged into confidence".
+   * `anneal_temp` at 100–105 in all five conditions is a declared standing note:
+     a monotone linear mean puts the optimum at a range edge by construction. The
+     open question is chemical, and if a floor exists it belongs in `constraints:`.
+
+   Probes and notes are declared in `configs/…yaml` under `review:`, not hardcoded.
+
+5. **Done 2026-07-30 — `metrics.compute_ref_pareto_hv` required an explicit
+   reference.** The `ref_point_np=None` path used `mins - 1e-8`, essentially the
+   nadir itself: measured HV 6e-8 against 1.448 from `infer_reference_point` on
+   the same data, and re-derived per call so hypervolumes were not comparable
+   across iterations. Passing no reference now raises and names
+   `reference_point_utility`; a reference that nothing dominates also raises,
+   instead of returning the 0.0 that BoTorch's silent point-dropping produces.
+
+   The precise condition, pinned in `tests/test_metrics.py`: `mins - 1e-8` is
+   harmless while some *dominated* point sets the per-objective minima, and
+   collapses once the Pareto set itself sets them — each point best in one
+   objective and worst in another, which is what a genuine trade-off front is.
+   Plotting code may now simply pass `config["reference_point_utility"]`.
+
+6. **New, found 2026-07-30: the signal-collapse guard cannot tell a collapsed GP
+   from a mean function that works.** `_assert_signal_not_collapsed` compares
+   `gp.posterior(X).variance` against the fitted noise. A mean module does not
+   enter the variance, so when a structured mean explains most of the data the
+   residual GP's latent sd goes to ~0 and the guard raises `ModelFitError` —
+   with a message asserting "its posterior mean is effectively constant", which is
+   verifiably false in that case, because `posterior().mean` carries the fitted
+   trend.
+
+   Two situations share one numeric signature:
+
+   * **True collapse** (the documented one): zero-mean GP, outputscale → 0,
+     posterior mean genuinely flat, acquisition meaningless. Must fail.
+   * **The mean function did its job**: residual variance ~0, posterior mean
+     tracks the trend, candidate ranking still works — only the UCB exploration
+     term has degenerated. Currently also fails, which blocks the round.
+
+   Not reachable on the current R0 data, and reproducible on synthetic data whose
+   thickness follows `log T ~ log(speed_1) + log(precur_conc)` closely (it is why
+   `tests/test_batch_review.py` builds data with deliberate residual structure).
+   **The risk rises with better data**, so this matters for the intake path: if the
+   group returns cleaner thickness measurements, the trend may explain more and the
+   launcher would refuse to propose a round.
+
+   Suggested fix, not applied — the guard is deliberate and its rationale is
+   measured, so this is a decision rather than a cleanup: test what the message
+   claims. Raise only when the latent sd is negligible **and** the posterior mean
+   is near-constant across the evaluated points; when the mean varies, record a
+   loud `ModelFitWarning` instead, since the exploration term really has
+   degenerated even though the model is usable.
+
+7. **Not started:** replicate-variance pooling into `train_Yvar` (Phase 4) — and
+   `read_candidate_results().replicate_spread` now hands it the numbers. The
+   tkinter launcher landed 2026-07-30 (`launcher.py`, plus the two double-click
+   scripts; see the README). The legacy debug ceremony is already gone:
+   `production_gate.py` and 22 other Step 1/2A/2B/2C modules were removed in
+   `33f101f`, and `test_validity_report_carries_no_approval_flags` holds the
+   approval tiers out.
 
 ## Reproducing the analysis
 

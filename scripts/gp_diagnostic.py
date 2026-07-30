@@ -44,7 +44,7 @@ from scipy.stats import qmc
 
 from mobo_kit.model_validation import compute_prediction_metrics
 
-# Canonical grid, docs/D2D_CAMPAIGN_SPEC.md. (name, start, stop)
+# Canonical grid, configs/campaign_d2d_perovskite.yaml. (name, start, stop)
 DESIGN = (
     ("speed_1", 1000.0, 6000.0),
     ("time_1", 5.0, 50.0),

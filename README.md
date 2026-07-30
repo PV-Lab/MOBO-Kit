@@ -49,6 +49,33 @@ size, and a validity report).
 priority order, and the questions already settled. `docs/CAMPAIGN_STATUS.md` is the
 working guide: what to pass, what comes back, how to plot it.
 
+## Running a round without writing code
+
+Double-click **`launch_mobo_kit.bat`** (Windows) or **`launch_mobo_kit.command`**
+(macOS — `chmod +x` it once first). A small window opens:
+
+1. **Browse** to the campaign workbook. It is remembered next time.
+2. **Check workbook** — reports which round is due, and anything the read
+   noticed: a stored score that no longer matches its measurements, a reading the
+   operator flagged, a film whose thickness readings disagree with each other.
+3. **Propose R1** (or R2) — fits the model, scores the candidate pool, and writes
+   the batch to a **new file beside the workbook**, never into it. That file gets
+   two sheets: the worklist to fill in, and a **`Review`** sheet giving each
+   proposed condition's predicted objectives with uncertainties, its predicted
+   thickness in nanometres, its distance from anything already measured, and which
+   settings sit at the edge of their range. The same text appears in the window, so
+   it can be forwarded to the group as-is.
+
+Then run the films, fill in the highlighted columns of that new sheet, and press
+the button again. R2 reads the R1 measurements back and aggregates each condition's
+three films into one observation.
+
+The window approves nothing. It shows the proposed conditions in physical units
+with the batch's spacing diagnostics; a human decides whether to fabricate.
+Everything it does is available as plain functions in `mobo_kit.launcher`
+(`inspect_campaign`, `gather_observations`, `generate_next_round`) for anyone who
+would rather script it.
+
 ## Installation
 
 ```bash
@@ -94,22 +121,25 @@ src/mobo_kit/
   models.py               GP construction
   model_validation.py     strict fitting, exact LOOCV, fit guards
   structured_mean.py      physics-informed GP mean functions
-  objectives.py           raw measurement -> utility contract
+  scores.py               measurement columns -> objective values, cross-checked
+  objectives.py           objective value -> utility contract
+  batch_review.py         what a proposed batch says, before anyone fabricates it
+  launcher.py             the one-button loop, and the tkinter window over it
   ucb_hvi.py              UCB hypervolume-improvement scoring (R1)
   qlognehvi_batch.py      qLogNEHVI batch selection (R2)
   batch_selection.py      local penalization, shared by both
   discrete_refinement.py  exact-grid local search
-  workbook_io.py          Excel read / candidate-sheet write
+  workbook_io.py          Excel read / candidate-sheet write / read results back
   metrics.py              Pareto front and hypervolume
   plotting.py             diagnostic plots
   candidate_diagnostics.py, acquisition.py, cli.py, main.py,
   data.py, constraints.py, utils.py
 
 configs/   campaign_d2d_perovskite.yaml (the live campaign) + two examples
-docs/      HANDOFF.md, CAMPAIGN_STATUS.md, GP_MODEL_DECISION.md,
-           D2D_CAMPAIGN_SPEC.md
+docs/      HANDOFF.md, CAMPAIGN_STATUS.md, GP_MODEL_DECISION.md
 scripts/   diagnostics and report figures
-tests/     280 tests
+tests/     387 tests
+launch_mobo_kit.bat, launch_mobo_kit.command   double-click entry points
 ```
 
 ## Configuration
@@ -123,16 +153,27 @@ objectives:
   scaling_mode: fixed_affine
   specs:
     - name: thickness
-      model_source_column: "Thickness (avg)"   # the GP trains on nanometres
+      model_source_column: "Thickness (avg)"   # stored cell: cross-check only
       transform: gaussian_target               # utility peaks at the target
       target: 650.0
       sigma: 176.7766952966369
+      measurement:                             # what the GP actually trains on
+        recipe: mean_of_present                # mean of whichever were measured
+        inputs: [{column: T1}, {column: T2}, {column: T3}, {column: T4}]
+        excluded: [{column: "T anom"}]         # operator-flagged, never averaged
+        cross_check: [{column: "Thickness (avg)", atol: 0.5}]
       mean_function:                           # physics-informed trend
         response: log
         features:
           - {column: speed_1, transform: log}
           - {column: precur_conc, transform: log}
 ```
+
+The `measurement` block exists because several of the workbook's derived score
+cells are pasted literals rather than formulas, so they do not update when the
+measurements behind them are edited. `scores.py` recomputes each objective from
+the raw columns and demotes the stored cell to a cross-check that warns on
+disagreement — see `docs/CAMPAIGN_STATUS.md` issue 2 for the audit.
 
 Objective scales are **fixed for the whole campaign** and must never be
 re-derived from observed data — otherwise utility space moves between rounds and
@@ -155,6 +196,10 @@ hypervolume stops being comparable across them.
 
 All of these are campaign configuration, not code. Tuning them does not require
 touching the algorithm.
+
+The ten input grids hold 11/10/11/11/21/17/18/11/21/9 values, so the full
+Cartesian product is 177,816,994,740 recipes. It must never be materialised —
+that is what the sampled candidate pool and the discrete local search are for.
 
 ## History
 

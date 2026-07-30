@@ -198,8 +198,11 @@ Carried through to the score: R² −0.145 → **−0.019**, Spearman +0.243 →
 The structured mean legitimately reaches what the legacy model reached by
 accident of overconfidence.
 
-**Not yet wired into `campaign.py`.** R1 candidates generated before this lands
-use the plain GP.
+**Wired into `campaign.py`.** `fit_campaign_models` reads each objective's
+`mean_function` block and builds one `StructuredMean` module per GP, so
+`posterior()` already carries the trend and no caller adds it back. Any R1
+candidates generated before commit `600ef60` used the plain GP and are not
+comparable with anything generated after it.
 
 The linear coefficients are refit **inside every fold**, on the 14 training rows
 only (`scripts/thickness_permutation_and_mean.py`, in the fold loop). The held-out
@@ -284,11 +287,39 @@ acquisition function proposes nothing near `speed_1 = 1000`, notice it. It may
 mean the model has concluded the region is bad when what it actually has is two
 points that disagree.
 
+### Added 2026-07-29: sample 12's thickness is two readings that disagree 2.3x
+
+Sample 12's recorded 1155 nm is `ROUND(mean(1600, 709))` — its two thickness
+points differ by a factor of 2.26. It is one of three rows whose thickness
+readings are bimodal rather than scattered: sample 8 is `686, 740, 270, 250`
+(ratio 2.96) and sample 15 is `596, 702, 784, 590`. Within-row sd of `log(T)` is
+0.584, 0.576 and 0.137 for samples 8, 12 and 15, against 0.048 or less for the
+other twelve rows.
+
+This does **not** reopen "sample 1 stays in". That decision was about which
+observation to drop, and the answer is still neither. What it adds is a candidate
+mechanism for sample 12's leverage of 0.462: its thickness value is the midpoint
+of a bimodal measurement, so the low-speed end of the strongest predictor is
+anchored by a number with an unusually weak claim to being a single measurement.
+
+It also makes the low-speed corner a **measurement** question before it is a
+physics question. Probing `speed_1 = 1000` in R1 is still right, and the specific
+thing to collect there is more thickness points per film — not only more films.
+
 ## Open
 
-- Wire the structured mean into the campaign path before generating R1
-  candidates for fabrication.
-- Hypervolume reference: fixed. `configs/campaign_d2d_perovskite.yaml` now
-  declares `reference_point_utility` in utility space after the transforms, so
-  no axis dominates. The old raw-scale `[-0.01, -10.0, -0.01]` gave the
-  optoelectronic axis 4.01x the uniformity axis.
+- **The unexplained 0.089 on optoelectronic** — +0.355 (two-stage) against
+  +0.267 (mean module), same pipeline, same 15 rows. What has been ruled out is
+  in `CAMPAIGN_STATUS.md`, open issue 1.
+- **Does linear-mean-plus-GP beat linear-mean-alone?** +0.355 against +0.244 is
+  0.47 sd of the ±0.236 floor, so the observed gap is not evidence either way.
+  The test rides along with the optoelectronic permutation run.
+
+## Closed
+
+- The structured mean is wired into `campaign.py` (`fit_campaign_models`, and the
+  `_fit_models` it delegates to), commit `600ef60`.
+- Hypervolume reference: fixed. `configs/campaign_d2d_perovskite.yaml` declares
+  `reference_point_utility` in utility space after the transforms, so no axis
+  dominates. The old raw-scale `[-0.01, -10.0, -0.01]` gave the optoelectronic
+  axis 4.01x the uniformity axis.
