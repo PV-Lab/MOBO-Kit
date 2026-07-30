@@ -138,7 +138,7 @@ src/mobo_kit/
 configs/   campaign_d2d_perovskite.yaml (the live campaign) + two examples
 docs/      HANDOFF.md, CAMPAIGN_STATUS.md, GP_MODEL_DECISION.md
 scripts/   diagnostics and report figures
-tests/     394 tests
+tests/     399 tests
 launch_mobo_kit.bat, launch_mobo_kit.command   double-click entry points
 ```
 

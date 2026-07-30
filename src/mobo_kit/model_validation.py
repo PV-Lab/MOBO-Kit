@@ -531,6 +531,13 @@ MINIMUM_LATENT_TO_NOISE_SD_RATIO = 1.0e-2
 #:
 #: Against the observed spread the question is scale-free and stable: does the
 #: model's mean move with the measurements, or not at all?
+#:
+#: This is a DIAGNOSTIC threshold and it never touches utility space, so it does
+#: not violate the campaign-fixed-scaling rule in `assert_scaling_is_campaign_fixed`.
+#: That rule governs the objective scales that feed hypervolume, where a
+#: data-derived scale would make rounds incomparable.  Nothing here reaches a
+#: utility, a reference point or a hypervolume; it only asks whether one fit's
+#: mean moved.  Do not "correct" it to a fixed constant.
 MINIMUM_MEAN_SPREAD_TO_TARGET_RATIO = 0.05
 
 #: Fit stage name for the guard, so warnings and errors are filterable.

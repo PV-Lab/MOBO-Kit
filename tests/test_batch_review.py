@@ -498,10 +498,27 @@ def test_the_round_diagnostics_carry_no_library_deprecation_noise(
     of someone reviewing a batch is how people learn to ignore warnings."""
     from mobo_kit.campaign import run_r1_ucb
 
-    X, Y = _observations(config)
-    warnings = run_r1_ucb(config, X, Y, n=2).diagnostics["model_fit_warnings"]
+    warnings = run_r1_ucb(config, *_observations(config), n=2).diagnostics[
+        "model_fit_warnings"
+    ]
     assert warnings
     assert not any("numpy" in w.lower() or "__array__" in w for w in warnings)
+
+
+def test_the_unfiltered_warnings_are_kept_but_not_surfaced(config) -> None:
+    """Filtered out of the human channel, retained for debugging. A BoTorch or
+    scipy convergence warning the filter dropped is exactly what someone needs when
+    a fit looks strange weeks later."""
+    from mobo_kit.campaign import run_r1_ucb
+
+    diagnostics = run_r1_ucb(config, *_observations(config), n=2).diagnostics
+    raw = diagnostics["fit_warnings_raw"]
+    assert raw, "the fits do raise library warnings on this stack"
+    assert any("numpy" in entry.lower() or "__array__" in entry for entry in raw)
+    # each entry says which objective and which stage it came from
+    assert all("|" in entry for entry in raw)
+    # and the surfaced channel is still clean
+    assert not diagnostics["model_fit_warnings"]
 
 
 def _collapsed_review(config):

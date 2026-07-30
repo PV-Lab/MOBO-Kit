@@ -21,7 +21,16 @@ Each returns a `RoundResult` with:
 |---|---|
 | `conditions` | distinct proposed conditions, physical units, columns = input names |
 | `replicates` | one row per film, with `candidate_id` / `replicate_group` / `replicate_index` |
-| `diagnostics` | method, seed, pool size, objective contract version, validity report |
+| `diagnostics` | method, seed, pool size, objective contract version, validity report, fit warnings |
+
+Two warning keys, deliberately separate. `diagnostics["model_fit_warnings"]` holds
+only the fit guard's own findings — the ones a human reviewing a batch must read,
+and the ones the launcher and the `Review` sheet surface.
+`diagnostics["fit_warnings_raw"]` holds everything the fits raised, including the
+~18 numpy-2.0 deprecation notices per fit that this stack emits. Nothing surfaces
+the raw list; it is there for debugging a strange fit later, because a BoTorch or
+scipy convergence warning that the filter dropped is exactly what would be wanted
+then.
 
 `diagnostics["validity"]` carries `min_pairwise_distance` and
 `boundary_coords_per_condition`, which are the numbers to plot per round.

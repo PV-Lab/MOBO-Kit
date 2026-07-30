@@ -341,6 +341,19 @@ def isolated_settings(monkeypatch):
     monkeypatch.setattr("mobo_kit.launcher.remember_workbook", lambda path: None)
 
 
+def _status_for(path) -> CampaignStatus:
+    from pathlib import Path
+
+    return CampaignStatus(
+        workbook=Path(path).resolve(),
+        next_round="R1",
+        reason="pretend R1 is due",
+        scored_rows=0,
+        total_rows=0,
+        observed_conditions=15,
+    )
+
+
 def _tk_available() -> bool:
     try:
         import tkinter
@@ -407,6 +420,114 @@ def test_the_window_shows_a_readable_error_rather_than_a_traceback(
         assert "does not exist" in body
         assert "Traceback" not in body
         assert window.headline.cget("text") == "Cannot continue."
+    finally:
+        window.root.destroy()
+
+
+@pytest.mark.skipif(not _tk_available(), reason="no display for tkinter")
+def test_a_result_for_a_workbook_the_user_left_is_discarded(
+    workbook, config, isolated_settings
+) -> None:
+    """The race the test fixture hid, now closed at the source.
+
+    Work runs off the main thread, so a check dispatched against one workbook can
+    return after the user has selected another. Painting "Ready to propose R1" over
+    a different workbook is worse than painting nothing.
+
+    Driven through the queue rather than by racing two real threads. The first
+    version of this test did race them, passed alone, and failed intermittently in
+    a full-suite run -- a flaky test of a race-condition fix is worse than no test,
+    because it teaches people to re-run until green.
+    """
+    from mobo_kit.launcher import LauncherWindow
+
+    window = LauncherWindow(CONFIG_PATH)
+    try:
+        window.path_var.set(str(workbook))
+        window._start("pretending to read")
+        window._request_id = 1
+        # the user navigates away before the reply lands
+        window.path_var.set(str(workbook.parent / "somewhere else.xlsx"))
+        window._queue.put((1, "status", _status_for(workbook)))
+        window.drain_once()
+
+        assert window._status is None, "the stale status must not be adopted"
+        assert not window._busy, "a discarded reply must still clear the busy state"
+        assert "Ready to propose" not in window.headline.cget("text")
+        # buttons usable again rather than stuck disabled
+        assert str(window.check_button.cget("state")) == "normal"
+        assert str(window.generate_button.cget("state")) == "disabled"
+    finally:
+        window.root.destroy()
+
+
+@pytest.mark.skipif(not _tk_available(), reason="no display for tkinter")
+def test_a_result_for_the_current_workbook_is_adopted(
+    workbook, config, isolated_settings
+) -> None:
+    """The other half of the rule: it must not discard everything."""
+    from mobo_kit.launcher import LauncherWindow
+
+    window = LauncherWindow(CONFIG_PATH)
+    try:
+        window.path_var.set(str(workbook))
+        window._start("pretending to read")
+        window._request_id = 1
+        window._queue.put((1, "status", _status_for(workbook)))
+        window.drain_once()
+
+        assert window._status is not None
+        assert window.headline.cget("text") == "Ready to propose R1."
+        assert str(window.generate_button.cget("state")) == "normal"
+    finally:
+        window.root.destroy()
+
+
+@pytest.mark.skipif(not _tk_available(), reason="no display for tkinter")
+def test_a_superseded_reply_does_not_overwrite_a_newer_request(
+    workbook, config, isolated_settings
+) -> None:
+    """Two presses: the earlier press's answer must not land after the later one."""
+    from mobo_kit.launcher import LauncherWindow
+
+    window = LauncherWindow(CONFIG_PATH)
+    try:
+        window.path_var.set(str(workbook))
+        window._start("pretending to read")
+        window._request_id = 2  # a second press is already in flight
+        window._queue.put((1, "status", _status_for(workbook)))
+        window.drain_once()
+        assert window._status is None, "request 1's reply landed after request 2"
+        assert not window._busy
+
+        window._start("still pretending")
+        window._queue.put((2, "status", _status_for(workbook)))
+        window.drain_once()
+        assert window._status is not None, "request 2's own reply must land"
+    finally:
+        window.root.destroy()
+
+
+@pytest.mark.skipif(not _tk_available(), reason="no display for tkinter")
+def test_the_startup_auto_check_is_cancelled_when_the_user_acts(
+    workbook, config, monkeypatch
+) -> None:
+    """The auto-check fires 200 ms after construction against the remembered
+    workbook. If the user has already pressed something, that answer is about the
+    wrong file."""
+    from mobo_kit import launcher as launcher_module
+    from mobo_kit.launcher import LauncherWindow
+
+    monkeypatch.setattr(launcher_module, "remembered_workbook", lambda: workbook)
+    monkeypatch.setattr(launcher_module, "remember_workbook", lambda path: None)
+
+    window = LauncherWindow(CONFIG_PATH)
+    try:
+        assert window._auto_check_id is not None, "a remembered workbook should schedule one"
+        window._cancel_auto_check()
+        assert window._auto_check_id is None
+        # cancelling twice is harmless
+        window._cancel_auto_check()
     finally:
         window.root.destroy()
 

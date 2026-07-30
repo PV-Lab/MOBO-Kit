@@ -523,6 +523,7 @@ def _fit_models(
 
     models = []
     warnings: list[str] = []
+    raw_warnings: list[str] = []
     for index, (spec, entry) in enumerate(zip(specs, entries)):
         mean_spec = mean_spec_from_config(entry)
         y = np.asarray(Y_raw, dtype=float)[:, index]
@@ -546,16 +547,24 @@ def _fit_models(
         # the GP's signal component collapsed but the mean function carried the
         # trend. Discarding these is how such a fit reaches a batch silently.
         #
-        # Only the guard's own warnings travel. `record.warnings` also captures
-        # every Python warning raised during fitting, which on this stack means ~18
-        # numpy-2.0 deprecation notices per fit; putting those in front of a human
-        # reviewing a batch is how people learn to ignore warnings.
+        # Only the guard's own warnings travel to a human. `record.warnings` also
+        # captures every Python warning raised during fitting, which on this stack
+        # means ~18 numpy-2.0 deprecation notices per fit; putting those in front of
+        # someone reviewing a batch is how people learn to ignore warnings.
         warnings.extend(
             warning.message
             for warning in record.warnings
             if warning.stage == SIGNAL_COLLAPSE_STAGE
         )
-    return ModelListGP(*models), tuple(warnings)
+        # The unfiltered list is kept, unsurfaced, because a scipy or BoTorch
+        # convergence warning that the filter dropped is exactly what someone needs
+        # when a fit looks strange six weeks from now.
+        raw_warnings.extend(
+            f"{warning.objective_name}|{warning.stage}|{warning.warning_category}: "
+            f"{warning.message}"
+            for warning in record.warnings
+        )
+    return ModelListGP(*models), tuple(warnings), tuple(raw_warnings)
 
 
 def fit_campaign_models(
@@ -575,20 +584,25 @@ def fit_campaign_models(
     ``Y_raw`` holds the MODEL SOURCE values in objective order, the same contract
     as :func:`run_r1_ucb`.
 
-    Returns ``(model, warnings)``.  The warnings are returned rather than logged
-    because a fit can succeed and still deserve distrust: the loudest case is a
-    GP whose signal component collapsed while its mean function carried the trend,
-    which leaves candidate ranking intact but makes the reported intervals
-    understated.  Anything showing a batch to a human should show these too.
+    Returns ``(model, warnings)``, where ``warnings`` holds only the fit guard's
+    own findings -- the ones a human reviewing a batch must read.  They are
+    returned rather than logged because a fit can succeed and still deserve
+    distrust: the loudest case is a GP whose signal component collapsed while its
+    mean function carried the trend, which leaves candidate ranking intact but
+    makes the reported intervals understated.
+
+    The unfiltered list, including library warnings raised during fitting, is on
+    ``RoundResult.diagnostics["fit_warnings_raw"]``.
     """
     design = build_design_from_config(dict(config))
     resolved_seed = (
         int(config.get("reproducibility", {}).get("seed", 0)) if seed is None else seed
     )
     values = np.asarray(X_phys, dtype=float)
-    return _fit_models(
+    model, fit_warnings, _raw = _fit_models(
         config, values, _normalise(design, values), Y_raw, resolved_seed
     )
+    return model, fit_warnings
 
 
 def _normalise(design: Design, X_phys: np.ndarray) -> np.ndarray:
@@ -653,7 +667,7 @@ def run_r1_ucb(
     penalization = _penalization(config)
 
     observed_norm = _normalise(design, observed_X_phys)
-    model, fit_warnings = _fit_models(
+    model, fit_warnings, raw_fit_warnings = _fit_models(
         config,
         np.asarray(observed_X_phys, dtype=float),
         observed_norm,
@@ -711,6 +725,9 @@ def run_r1_ucb(
                 (~on_grid).sum()
             ),
             "model_fit_warnings": list(fit_warnings),
+            # unsurfaced on purpose: everything the fit raised, for debugging a
+            # strange fit later, not for showing to a reviewer now
+            "fit_warnings_raw": list(raw_fit_warnings),
             "validity": report,
         },
     )
@@ -740,7 +757,7 @@ def run_r2_qlognehvi(
     penalization = _penalization(config)
 
     observed_norm = _normalise(design, observed_X_phys)
-    model, fit_warnings = _fit_models(
+    model, fit_warnings, raw_fit_warnings = _fit_models(
         config,
         np.asarray(observed_X_phys, dtype=float),
         observed_norm,
@@ -796,6 +813,9 @@ def run_r2_qlognehvi(
                 (~on_grid).sum()
             ),
             "model_fit_warnings": list(fit_warnings),
+            # unsurfaced on purpose: everything the fit raised, for debugging a
+            # strange fit later, not for showing to a reviewer now
+            "fit_warnings_raw": list(raw_fit_warnings),
             "validity": report,
         },
     )

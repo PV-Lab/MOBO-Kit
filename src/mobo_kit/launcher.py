@@ -409,6 +409,17 @@ class LauncherWindow:
 
     tkinter is imported here rather than at module scope so that the logic can be
     imported and tested on a machine with no display.
+
+    **Results are matched to the request that asked for them.**  Work runs off the
+    main thread and reports back through a queue, so without that matching two
+    things can paint the pane with an answer to a question the user has moved on
+    from: the auto-check scheduled 200 ms after startup, and any second press while
+    the first is still running.  Each dispatch takes a request id; a reply carrying
+    a stale id is dropped.  A status reply also names the workbook it examined and
+    is dropped if the selection has changed since -- reporting "Ready to propose R1"
+    over a workbook the user has navigated away from is worse than reporting
+    nothing.  A dropped reply still clears the busy state, or the window would
+    disable its own buttons forever.
     """
 
     def __init__(self, config_path: str | Path = DEFAULT_CONFIG) -> None:
@@ -418,12 +429,14 @@ class LauncherWindow:
 
         self._tk = tk
         self._ttk = ttk
-        self._queue: queue.Queue[tuple[str, Any]] = queue.Queue()
+        self._queue: queue.Queue[tuple[int, str, Any]] = queue.Queue()
         self._config_path = Path(config_path)
         self._config: dict[str, Any] | None = None
         self._status: CampaignStatus | None = None
         self._generated: Generated | None = None
         self._busy = False
+        self._request_id = 0
+        self._auto_check_id: Any = None
 
         self.root = tk.Tk()
         self.root.title("MOBO-Kit - propose the next round")
@@ -479,7 +492,7 @@ class LauncherWindow:
 
         self.root.after(120, self._drain)
         if remembered is not None:
-            self.root.after(200, self.check)
+            self._auto_check_id = self.root.after(200, self.check)
 
     # -- helpers ----------------------------------------------------------- #
 
@@ -516,26 +529,72 @@ class LauncherWindow:
         can = self._status is not None and self._status.can_generate
         self.generate_button.configure(state="normal" if can else "disabled")
 
-    def _in_thread(self, work: Callable[[], tuple[str, Any]]) -> None:
+    def _cancel_auto_check(self) -> None:
+        """Drop the startup auto-check the moment the user does anything.
+
+        Without this it fires 200 ms in and answers a question about whichever
+        workbook was remembered, which may no longer be the one on screen.
+        """
+        if self._auto_check_id is not None:
+            try:
+                self.root.after_cancel(self._auto_check_id)
+            except Exception:
+                pass
+            self._auto_check_id = None
+
+    def _selection(self) -> str:
+        raw = self.path_var.get().strip()
+        try:
+            return str(Path(raw).resolve()) if raw else ""
+        except OSError:
+            return raw
+
+    def _in_thread(
+        self, work: Callable[[Callable[[str, Any], None]], tuple[str, Any]]
+    ) -> None:
         import threading
+
+        self._request_id += 1
+        request = self._request_id
+
+        def post(kind: str, payload: Any) -> None:
+            self._queue.put((request, kind, payload))
 
         def target() -> None:
             try:
-                self._queue.put(work())
+                kind, payload = work(post)
+                post(kind, payload)
             except Exception as exc:  # surfaced in the window, never a traceback box
-                self._queue.put(("error", exc))
+                post("error", exc)
 
         threading.Thread(target=target, daemon=True).start()
 
-    def _drain(self) -> None:
+    def drain_once(self) -> None:
+        """Apply whatever the worker threads have reported, dropping stale replies.
+
+        Separate from the polling loop so the drop rules can be tested by putting a
+        message on the queue, rather than by racing two real threads and hoping the
+        timing lands -- which is a flaky test of a race-condition fix.
+        """
         import queue
 
         try:
             while True:
-                kind, payload = self._queue.get_nowait()
+                request, kind, payload = self._queue.get_nowait()
+                if request != self._request_id:
+                    # superseded by a newer press; that request's own reply follows
+                    self._finish()
+                    continue
+                if kind == "status" and str(payload.workbook) != self._selection():
+                    # answers a workbook the user has navigated away from
+                    self._finish()
+                    continue
                 self._handle(kind, payload)
         except queue.Empty:
             pass
+
+    def _drain(self) -> None:
+        self.drain_once()
         self.root.after(120, self._drain)
 
     def _handle(self, kind: str, payload: Any) -> None:
@@ -586,6 +645,7 @@ class LauncherWindow:
     def browse(self) -> None:
         from tkinter import filedialog
 
+        self._cancel_auto_check()
         chosen = filedialog.askopenfilename(
             title="Choose the campaign workbook",
             filetypes=[("Excel workbook", "*.xlsx"), ("All files", "*.*")],
@@ -595,15 +655,17 @@ class LauncherWindow:
             self.check()
 
     def check(self) -> None:
+        self._auto_check_id = None  # this call IS the auto-check when scheduled
         if self._busy:
             return
         workbook = self.path_var.get().strip()
         if not workbook:
             self.headline.configure(text="Choose a workbook first.")
             return
+        self._status = None
         self._start("Reading the workbook...")
 
-        def work() -> tuple[str, Any]:
+        def work(post: Callable[[str, Any], None]) -> tuple[str, Any]:
             config = self._config_or_load()
             status = inspect_campaign(workbook, config)
             remember_workbook(workbook)
@@ -612,17 +674,18 @@ class LauncherWindow:
         self._in_thread(work)
 
     def generate(self) -> None:
+        self._cancel_auto_check()
         if self._busy or self._status is None or not self._status.can_generate:
             return
         workbook = self.path_var.get().strip()
         self._start(f"Proposing {self._status.next_round}...")
 
-        def work() -> tuple[str, Any]:
+        def work(post: Callable[[str, Any], None]) -> tuple[str, Any]:
             config = self._config_or_load()
             generated = generate_next_round(
                 workbook,
                 config,
-                progress=lambda message: self._queue.put(("progress", message)),
+                progress=lambda message: post("progress", message),
             )
             return "generated", generated
 
