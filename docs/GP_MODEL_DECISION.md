@@ -72,25 +72,50 @@ so archived Step 2B/2C artifacts stay interpretable. `dim_scaled_prior` is
 `PRIMARY_VARIANT`; the retired contract must be requested by name and is kept
 only for reproducing old runs.
 
-## Two resolution floors. Check both before comparing anything.
+## Three floors. Check all three before comparing any two numbers.
 
-**Null: −0.148.** Predicting the leave-one-out mean of the other N−1 gives
+**1. Null: −0.148.** Predicting the leave-one-out mean of the other N−1 gives
 LOO R² = 1 − (N/(N−1))² and Spearman exactly −1, independent of the data. A model
-below this learned nothing.
+below this learned nothing. It moves with N: −0.148 at 15, −0.105 at 21, −0.069 at
+31, so recompute it rather than reusing this number on a bigger dataset.
 
-**Resolution: ±0.236.** Parametric bootstrap at N=15, 4000 resamples from the
-same underlying truth, gives an LOO R² standard deviation of **0.236** and a
-central 95% range of **[−0.231, +0.666]**. The identical relationship produces
-anything in that range purely by resampling.
+**2. Sampling: ±0.236** (called the *resolution floor* in older text here and in
+`CAMPAIGN_STATUS.md` — same number, same thing). Parametric bootstrap at N=15,
+4000 resamples from the same underlying truth, gives an LOO R² standard deviation
+of **0.236** and a central 95% range of **[−0.231, +0.666]**. The identical
+relationship produces anything in that range purely by resampling. Shrinks roughly
+as 1/√N.
+
+**3. Numerical reproducibility: ≈0.07** (added 2026-07-30). Two *independent*
+perturbations, neither of which changes the model or the data in any meaningful
+sense, each move LOO R² by about this much at N=15:
+
+| perturbation | size | LOO R² moves |
+|---|---|---:|
+| MLL optimiser landing elsewhere on an **identical** likelihood surface | outputscale and noise ≤2.7%, median lengthscale 9.6% | 0.0715 |
+| rounding the thickness input to whole nanometres | ≤0.5 nm on 7 of 15 rows | 0.0670 |
+
+Neither is sampling noise — both are deterministic and reproducible — and neither
+reflects a real difference in what the model knows. **So a second-decimal
+difference in LOO R² at this N is below what the metric can reproduce even on
+identical data with identical models.** Where floor 2 says a difference may be
+luck, floor 3 says it may not be a difference at all.
 
 So **two LOO R² values less than about half a point apart are not a comparison at
-this N.** This has been walked into twice in this project — once arguing −0.017
-against −0.145, once arguing +0.355 against +0.244 — both times because the
-number moved in the pleasing direction. The floor is written down here so the
-next person can check before reaching for a difference.
+this N, and anything in the second decimal place is not even a measurement.** This
+project walked into floor 2 twice — once arguing −0.017 against −0.145, once
+arguing +0.355 against +0.244 — both times because the number moved in the pleasing
+direction, and the second of those turned out to be floor 3 all along.
 
-Differences that survive the floor: the plain-vs-structured swings below
-(0.20 and 0.70). Differences that do not: anything in the second decimal place.
+Differences that survive: the plain-vs-structured swings below (0.20 and 0.70).
+Differences that do not: anything in the second decimal place.
+
+**A corollary worth its own line.** Under the same 0.5 nm rounding the plain GP
+moved 0.067 while the structured model moved 0.006 — a tenfold difference in
+sensitivity to a perturbation below measurement precision. A model whose answer
+turns on half a nanometre is reporting arithmetic; one that ignores it is reporting
+a trend. That is independent evidence for the mean function carrying the signal,
+arrived at without looking at either model's score.
 
 ## The bar for "the model learned something"
 
@@ -277,6 +302,15 @@ The plain GP does not clear p < 0.05. **The structured mean does.** That earns
 "thickness is genuinely predictive" rather than "directionally right". On R² the
 structured mean reaches p = 0.144 (95% CI [0.129, 0.162]), not significant — but
 rank drives candidate selection, and rank is significant.
+
+**This is where the thickness mean function's evidentiary weight rests, and it has
+not moved.** The case is the rank permutation, p = 0.0350 with a 95% CI of
+[0.0270, 0.0446] at 1800 shuffles. The R² swing is *consistent* with it and no
+more: +0.201 on the rounded inputs this document used, +0.265 on the unrounded ones
+the model now trains on, against a ±0.236 sampling floor either way. Nothing in the
+2026-07-30 reconciliation touched the permutation result, because that result is
+about ranks and the reconciliation was about a half-nanometre change in a
+regression score.
 
 The null mean is −0.17, not 0: the leave-one-out shrinkage artifact drags it
 negative, which is why a positive observed value carries information.

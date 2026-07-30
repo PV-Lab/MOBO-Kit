@@ -122,15 +122,24 @@ scales from observed data between rounds.
 
 ## Model state
 
-Validated on the 15 R0 observations, exact leave-one-out, null R2 = -0.148:
+Validated on the 15 R0 observations, exact leave-one-out, null R2 = -0.148. These
+are the canonical numbers, as `scripts/intake_new_data.py` reports them — same
+pipeline and same inputs the model uses:
 
-| objective | plain GP | with structured mean |
-|---|---:|---:|
-| thickness (nm) | +0.183 | **+0.384** |
-| optoelectronic | -0.342 | **+0.267 to +0.355** (see open issues) |
-| uniformity | no learnable signal (permutation p = 0.82) | n/a |
+| objective | plain GP | with structured mean | swing |
+|---|---:|---:|---:|
+| thickness (nm) | +0.116 | **+0.381** | +0.265 |
+| optoelectronic | -0.342 | **+0.267** | +0.609 |
+| uniformity | no learnable signal (permutation p = 0.82) | n/a | — |
 
-Uniformity is exploration-only by measurement, not by choice. The interface must
+Both swings clear the ±0.236 sampling floor. `GP_MODEL_DECISION.md` records
+slightly different figures (+0.183 → +0.384 for thickness, and +0.355 for
+optoelectronic); those came from an older instrument reading the workbook's rounded
+`Thickness (avg)`, and both differences are accounted for — see issue 1 and the
+intake section below. No conclusion depends on which set you read.
+
+Thickness rests on its rank permutation (p = 0.0350), not on the R2 swing.
+Uniformity is exploration-only by measurement, not by choice; the interface must
 not imply the model knows more than it does about it.
 
 ## Reading a round's results back
@@ -159,7 +168,7 @@ order in the replicate spread: under 0.1% at the ~3% spread most R0 rows show,
 about 14% on a film set as inconsistent as sample 12's. It is one config key per
 objective if the group prefers otherwise.
 
-`replicate_spread` is the raw material for open issue 5 and is already in the right
+`replicate_spread` is what Phase 4 (issue 7) pools, and it is already in the right
 space: a sd of `log T` for thickness, a sd of the value itself for the other two.
 It is NaN for a single film, which is honest — one film measures no
 reproducibility at all.
@@ -207,7 +216,11 @@ Two conventions that fail *silently* if got wrong, both now covered:
   number or 0.0. The helper asserts at least one point dominates before
   trusting the result.
 
-## Open issues -- read before trusting a batch
+## The numbered issues -- read before trusting a batch
+
+Kept numbered and in place even once closed, because each one's *evidence* is the
+reason a decision holds, and because several are the sort of thing that gets
+rediscovered and re-argued. Status is stated at the top of each.
 
 1. **CLOSED 2026-07-30. The 0.089 on optoelectronic is a numerical artifact, not a
    modelling difference.** The two pipelines specify *the same model*: fitting a
@@ -237,12 +250,23 @@ Two conventions that fail *silently* if got wrong, both now covered:
    across four seeds — so this is a different starting point on one surface, not
    stochastic variation.
 
-   **The conclusion that matters:** 0.0881 is well inside the ±0.236 resolution
-   floor, so it was never evidence of anything, and it is now explained as roughly
-   one-fifth definitional and four-fifths optimiser wobble. The campaign uses the
-   mean-module convention, which is the one wired into `campaign.py`. No action.
-   Kept below for the reasoning and because "two implementations disagree" is the
-   sort of thing that gets rediscovered.
+   **The mechanism, stated first because that is the rule.** The gap is roughly
+   one-fifth a definitional difference between two legitimate conventions and
+   four-fifths the optimiser landing in a different place on one identical
+   objective. Both parts are named, measured and reproducible. This project's own
+   rule is that a deterministic difference on the same rows must be *explained*,
+   not absorbed into a floor — so the explanation comes first and the floor comes
+   after it.
+
+   **The floor, as a corollary.** Given the mechanism, 0.0881 is also inside the
+   ±0.236 sampling floor, and its optimiser component is exactly the measurement
+   that established the ≈0.07 numerical-reproducibility floor — see
+   `GP_MODEL_DECISION.md`, "Three floors". So it was never evidence of anything.
+   That is a consequence of the explanation, not a substitute for it.
+
+   The campaign uses the mean-module convention, the one wired into `campaign.py`.
+   No action. Kept below for the reasoning, because "two implementations disagree"
+   is the sort of thing that gets rediscovered.
 
    ---
 
@@ -459,12 +483,15 @@ Two conventions that fail *silently* if got wrong, both now covered:
    agree to the last digit are a transcription, not a measurement, and a zero
    `train_Yvar` tells the model the observation is exact.
 
-8. **Not started:** the legacy leftovers below. The
-   tkinter launcher landed 2026-07-30 (`launcher.py`, plus the two double-click
-   scripts; see the README). The legacy debug ceremony is already gone:
-   `production_gate.py` and 22 other Step 1/2A/2B/2C modules were removed in
-   `33f101f`, and `test_validity_report_carries_no_approval_flags` holds the
-   approval tiers out.
+8. **Done — the legacy leftovers are gone.** The tkinter launcher landed
+   2026-07-30 (`launcher.py`, plus the two double-click scripts; see the README).
+   The legacy debug ceremony went earlier: `production_gate.py` and 22 other Step
+   1/2A/2B/2C modules were removed in `33f101f`, and
+   `test_validity_report_carries_no_approval_flags` holds the approval tiers out.
+
+**Nothing on this list is now blocked on code.** What remains is a human reading a
+proposed batch (issue 4), the R1 triplicates arriving (issue 7), and a decision
+about whether an `anneal_temp` floor belongs in `constraints:`.
 
 ## Are beta = 4.0 and radius = 0.25 defensible?
 

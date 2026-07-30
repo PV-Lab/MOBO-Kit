@@ -1,187 +1,182 @@
 # Handoff
 
-Written 2026-07-29 at the end of the session that fixed the GP and cleaned the
-branch. Read this first in a new session.
+Written 2026-07-30, at the end of the session that closed the numbered issue list.
+Read this first in a new session.
 
-## Read these three files, in this order (~15 minutes)
+## Read these, in this order (~20 minutes)
 
-1. **`README.md`** — what the toolkit is, the three-round loop, current parameters.
-2. **`docs/CAMPAIGN_STATUS.md`** — how to call it, what comes back, how to plot
-   it, and the numbered open issues. This is the working guide.
+1. **`README.md`** — what the toolkit is, the three-round loop, current parameters,
+   and how an experimentalist runs a round without writing code.
+2. **`docs/CAMPAIGN_STATUS.md`** — the working guide: what to pass, what comes
+   back, how the objectives are computed, and the numbered issues with their
+   evidence. Longest of the three and the one to keep open while working.
 3. **`docs/GP_MODEL_DECISION.md`** — why the model is the way it is. Every claim
-   has a measured number attached. Skip on a first pass if you only need to *use*
-   the toolkit; read it before changing the model.
+   has a measured number. Read it before changing the model; skip on a first pass
+   if you only need to *use* the toolkit.
 
-Then verify the state yourself in one command:
+Then verify the state yourself:
 
 ```bash
 pytest -q
 ```
 
 Expect **425 passed, 0 failed** (~90 s). If that holds, everything below is true.
+Two tests open a real tkinter window and drive it; they skip themselves without a
+display. Nothing in the suite needs the private workbook — the tests that would use
+it skip when it is absent.
 
-Two of those tests open a real tkinter window and drive it; they skip themselves
-if there is no display.
+## Where the project stands
 
-## What works
+The loop is complete and runs end to end, from a spreadsheet an experimentalist
+fills in to a batch of conditions with a review artifact attached.
 
-The full loop runs end to end: `run_r0_lhs` → `run_r1_ucb(5)` → `run_r2_qlognehvi(3)`,
-23 distinct conditions, three replicate films each. Verified on DTLZ2 — a
-synthetic problem with a known Pareto front — so the algorithm is checkable
-without any experimental data:
+```
+Summary Table.xlsx
+   -> scores.py            objectives computed from raw measurements,
+                           stored score cells demoted to warning cross-checks
+   -> campaign.py          GP per objective with a physics-informed mean,
+                           UCB-HVI (R1) or qLogNEHVI (R2), local penalization
+   -> batch_review.py      predictions in physical units, uncertainties,
+                           distance to observed, range-edge coordinates, probes
+   -> workbook_io.py       worklist + Review sheet written BESIDE the workbook
+   -> back again           read_candidate_results aggregates films to design
+                           points so R1 -> R2 can advance
+```
+
+`launch_mobo_kit.bat` / `.command` puts a small window over that. The acquisition
+modules are still byte-identical to where this project started: `ucb_hvi.py`,
+`qlognehvi_batch.py`, `batch_selection.py`, `discrete_refinement.py`,
+`candidate_pool.py`, `sobol_pool.py`, `lhs.py`, `design.py`. What changed is the
+GP's priors and guards, the objective layer, and orchestration on top.
+
+Verified without any experimental data, on DTLZ2, whose Pareto front is known:
 
 ```bash
 pytest tests/test_dtlz2_acceptance.py -m "not slow"   # structure
 pytest tests/test_dtlz2_acceptance.py -m slow         # BO vs random
 python scripts/plot_dtlz2_report.py                   # the figures
+python scripts/dtlz2_parameter_sweep.py               # beta x radius
 ```
 
-**The acquisition code was never modified.** `ucb_hvi.py`, `qlognehvi_batch.py`,
-`batch_selection.py`, `discrete_refinement.py`, `candidate_pool.py`,
-`sobol_pool.py`, `lhs.py`, `design.py` are byte-identical to the pre-session
-state. What changed is the GP (priors, guards), the objective layer (how a
-measurement becomes a utility), and new orchestration on top.
+## What is actually open
 
-## Open issues, in the order I would work them
+Everything numbered in `CAMPAIGN_STATUS.md` is closed, wired-and-waiting, or needs
+a person rather than code. In rough priority:
 
-1. ~~Wire the launcher.~~ **Done 2026-07-30.** `launcher.py` plus
-   `launch_mobo_kit.bat` / `.command`. The handoff said this had "no dependency on
-   anything else here" and that was wrong: nothing read a filled-in candidate
-   sheet back, so R1 → R2 could not advance. `workbook_io.read_candidate_results`
-   now does, aggregating each condition's films to one observation — thickness in
-   log space, matching what the GP trains on. Details in `CAMPAIGN_STATUS.md`,
-   "Reading a round's results back". The window itself is a shell over
-   `inspect_campaign` / `gather_observations` / `generate_next_round`, which are
-   tested headlessly.
-2. ~~Compute the three objectives from the measurement columns.~~ **Done
-   2026-07-30.** `src/mobo_kit/scores.py` computes them from `Coverage`/
-   `Uniformity`/`Phase purity`, `PL`/`Photoconductance` and `T1..T4`; the stored
-   score cells are now cross-checks that warn. The audit that motivated it, the
-   agreement numbers, and why `Y`/`AB` are deliberately *not* cross-checked are in
-   `CAMPAIGN_STATUS.md` issue 2. Two consequences worth carrying forward:
-   thickness now reaches the GP **unrounded** (663.75 rather than 664), and the
-   R1 candidate sheet asks for raw measurements instead of derived scores, so an
-   R1 sheet generated before this date has the wrong columns — regenerate it.
-3. **The unexplained 0.089 on optoelectronic.** Two implementations of one
-   pipeline on the same 15 rows give LOO R² +0.355 and +0.267. Ruled out: the
-   mean feature, sampling noise, the standardization scale. Untested: MLL
-   optimiser seeding, and the residual-vs-target training interaction. Both
-   numbers beat plain (−0.342), so the direction is safe; close the gap before
-   acting on optoelectronic candidates.
-4. **The review artifact is built (2026-07-30); the human review is still owed.**
-   `batch_review.py` writes a `Review` sheet beside the worklist and echoes it into
-   the launcher. What it reported on the R0-trained batch, and why the
-   `speed_1 = 1000` avoidance turned out to be the mean function extrapolating
-   rather than a local average, is in `CAMPAIGN_STATUS.md` issue 4. Someone still
-   has to read it and decide — that part is not automatable and is not automated.
-5. ~~Replicate variance into `train_Yvar`.~~ **Wired 2026-07-30, waiting on data.**
-   `replicate_variance.py` pools it, the rounds and the launcher accept it, and
-   enabling it once the R1 triplicates land is one config key
-   (`model.observation_noise: replicate_pooled`). Tested against synthetic
-   replicates so the arrival is a data event, not a code event. The traps —
-   variance of the mean not of a film, between-film versus the within-film floor,
-   BoTorch silently ignoring `train_Yvar` when a likelihood is also passed, and
-   `Standardize` rescaling it — are in `CAMPAIGN_STATUS.md` issue 7.
-6. ~~`metrics.compute_ref_pareto_hv` has a degenerate auto-reference.~~ **Done
-   2026-07-30.** The `ref_point_np=None` path is gone: a missing reference now
-   raises and names `reference_point_utility`. The same function also refuses a
-   reference nothing dominates, rather than reporting the 0.0 that BoTorch's
-   silent point-dropping would produce. `main.py` already passed an explicit
-   reference and is unaffected; the demo notebook had one bare call, now fixed.
-   Note for whoever reads the old issue text: `mins - 1e-8` is harmless while a
-   *dominated* point sets the per-objective minima, and collapses as soon as the
-   Pareto set itself does — which is what a real trade-off front looks like.
-   `tests/test_metrics.py` pins that condition; there were **no tests at all** on
-   this function before, which is how it survived.
+1. **Nobody has reviewed a proposed batch yet.** The artifact exists and says what
+   it should — including that the `speed_1 = 1000` corner is being skipped as
+   *known and bad* because the thickness trend extrapolates confidently to its
+   range edge, where the only two observations disagree with each other. Fifteen
+   films is a real cost. This is a human decision and is not automated.
+2. **The campaign is running on data the group calls test data.** When a corrected
+   or re-measured workbook arrives, run `python scripts/intake_new_data.py
+   --workbook <path>`. It re-derives the floors at the new N and gives a
+   per-objective keep-or-delete verdict on each mean function. Re-measuring
+   samples 12 and 8 would be the single highest-value experiment: sample 12's
+   1155 nm is `ROUND(mean(1600, 709))`, and because `speed_1` is a *feature of the
+   thickness mean function*, re-measuring it moves the fitted trend and therefore
+   the model's belief about the whole low-speed region — not just two points.
+3. **Phase 4 needs the R1 triplicates.** `replicate_variance.py` is wired and
+   tested against synthetic replicates; enabling it is one config key
+   (`model.observation_noise: replicate_pooled`).
+4. **`anneal_temp` sits at its range edge in every proposed condition**, which is
+   the monotone mean function speaking rather than a discovery. If the group would
+   never anneal below some temperature, that belongs in `constraints:` — currently
+   empty — and is much better learned now than after a batch ships.
+5. **One statistical question is still open**: does linear-mean-plus-GP beat
+   linear-mean-alone under the permutation null? It was always meant to ride along
+   with the optoelectronic permutation run and gates nothing.
 
-## Settled by measurement on 2026-07-30
+Plotting is the obvious next build: `CAMPAIGN_STATUS.md` has a "For the plotting
+work" section with the contour-slice recipe and the two conventions that silently
+produce wrong pictures.
 
-- **The 0.089 optoelectronic gap is closed.** Not a modelling difference: the two
-  pipelines specify the same model, so there was never a modelling question. About
-  a fifth is the outcome transform standardizing different quantities; the rest is
-  the MLL optimiser landing at slightly different hyperparameters on an identical
-  likelihood surface. The whole thing sits inside the ±0.236 floor. Details in
-  `CAMPAIGN_STATUS.md` issue 1.
-- **`scripts/intake_new_data.py` is the canonical instrument for LOO numbers.**
-  Where it disagrees with `GP_MODEL_DECISION.md`, it is right and that document is
-  historical — it read the workbook's rounded `Thickness (avg)` while the model
-  now trains on the unrounded mean. The one visible disagreement, plain thickness
-  +0.183 against +0.116, is entirely that: 7 of 15 rows differ by at most 0.50 nm,
-  and the pipeline contributes nothing. No conclusion changes.
+## Three floors. Check all three before comparing any two numbers.
 
-- **`beta = 4.0` and `radius = 0.25` stay.** A 3x3 sweep on DTLZ2, 8 seeds per
-  cell, under a rule committed before the numbers existed: no cell beat the
-  default by more than one per-seed sd while holding spacing. Flat within noise,
-  which is what says the default was not a lucky pick. Table in
-  `CAMPAIGN_STATUS.md`. Do not re-sweep without a reason; do note that `radius`
-  was **not** properly tested, because DTLZ2 batches land 0.72–0.98 apart and
-  never come within any tested radius.
+- **Null, −0.148 at N=15.** Predicting the leave-one-out mean gives
+  `1 − (N/(N−1))²`. A model below it learned nothing; negative LOOCV Spearman is
+  the signature, not a sign bug. It moves with N — recompute rather than reuse.
+- **Sampling, ±0.236.** Parametric bootstrap, 4000 resamples. Two LOO R² values
+  less than about half a point apart are not a comparison at this N.
+- **Numerical reproducibility, ≈0.07** (new, 2026-07-30). Two independent
+  perturbations that change nothing meaningful each move LOO R² by that much: the
+  MLL optimiser landing elsewhere on an *identical* likelihood surface (0.0715),
+  and rounding thickness to whole nanometres, ≤0.5 nm on 7 of 15 rows (0.0670).
+  A second-decimal difference is not a measurement.
 
-## Things not to redo
+This project argued inside a floor twice, both times because the number moved in
+the pleasing direction. Derivations and evidence are in `GP_MODEL_DECISION.md`.
 
-**Two resolution floors. Check both before comparing any two numbers.**
-
-- Null LOO R² at N=15 is **−0.148** (predicting the leave-one-out mean). A model
-  below that learned nothing. Negative LOOCV Spearman is the signature, not a
-  sign bug.
-- Resolution sd is **±0.236** (parametric bootstrap, 4000 resamples). Two LOO R²
-  values less than about half a point apart **are not a comparison at this N.**
-
-This project argued inside that floor twice — once over −0.017 vs −0.145, once
-over +0.355 vs +0.244 — both times because the number moved in the pleasing
-direction. The floors are in `GP_MODEL_DECISION.md` for exactly this reason.
-
-**Settled, do not reopen:**
+## Settled, do not reopen
 
 - **Sample 1 stays in.** Dropping it improves the fit, but sample 12 improves it
-  nearly twice as much and has the highest leverage in the design. The gain is a
-  high-leverage-endpoint artifact, not a provenance signal. Full reasoning and
-  the leverage table are in `GP_MODEL_DECISION.md`.
+  nearly twice as much and has the highest leverage in the design — a
+  high-leverage-endpoint artifact, not a provenance signal.
 - **`speed_2` does not explain the low-speed contradiction.** Adding
   `log(speed_2 + 1)` to the thickness mean drops LOO R² from +0.449 to −0.827.
-- **Uniformity has no learnable signal** from these 15 rows — nothing beat the
-  null across ~240 model configurations, permutation p = 0.82. Exploration-only.
+- **Uniformity has no learnable signal** from these 15 rows — nothing beat the null
+  across ~240 model configurations, permutation p = 0.82. Exploration-only.
   Whether that is physics or measurement noise is answerable from the R1
-  replicates, and not before.
+  replicates and not before.
+- **The 0.089 optoelectronic gap is explained**, not merely bounded: the two
+  pipelines specify the same model, about a fifth of the gap is the outcome
+  transform standardizing different quantities, and the rest is the optimiser.
+- **`beta = 4.0` and `radius = 0.25` stay**, under a rule fixed before the sweep
+  ran. `radius` was *not* exercised by that sweep — DTLZ2 batches land 0.72–0.98
+  apart — so it is verified separately by construction in
+  `tests/test_batch_selection.py`.
+- **The thickness mean function's evidentiary weight is the rank permutation**
+  (p = 0.0350, 95% CI [0.0270, 0.0446] at 1800 shuffles). The R² swing is
+  consistent with it and no more.
 
-## Two facts about the tooling that will bite you
+## Instruments: which number came from what
+
+`scripts/intake_new_data.py` is **canonical** for LOO numbers. Where it disagrees
+with `GP_MODEL_DECISION.md`, it is right and that document is historical: it read
+the workbook's rounded `Thickness (avg)` while the model now trains on the
+unrounded mean. The one visible disagreement — plain thickness +0.183 against
++0.116 — is entirely that, and no conclusion depends on it.
+
+## Four facts about the tooling that will bite you
 
 - **openpyxl discards cached formula values on save.** Verified: `Z2:Z4` read
   `[0.657, 0.587, 0.561]` before a save that only added an empty sheet, and
-  `[None, None, None]` after. This is why `workbook_io` writes candidates to a
-  *sibling file* and never opens the source for writing. Do not "simplify" it.
-- **BoTorch's `Hypervolume` assumes maximisation and silently drops points that
-  do not dominate the reference.** No warning, no exception — just a smaller
-  number, or 0.0. Assert at least one point dominates before trusting it.
+  `[None, None, None]` after. This is why `workbook_io` writes to a *sibling file*
+  and never opens the source for writing. Do not "simplify" it.
+- **BoTorch's `Hypervolume` assumes maximisation and silently drops points that do
+  not dominate the reference.** No warning, no exception — a smaller number, or
+  0.0. `metrics.compute_ref_pareto_hv` now refuses that case.
+- **BoTorch silently ignores `train_Yvar` when a `likelihood` is also passed.** The
+  likelihood wins, stays single-element, and the replicate information vanishes
+  with no error. Verified on 0.15.1. Pass one or the other, never both.
+- **`Standardize` rescales `train_Yvar` along with the targets**, so measured
+  variance must arrive in the target's own units — and in the *model's* space,
+  which for thickness is `log T`, not nanometres.
 
 ## Where the removed history went
 
 The Step 1/2A/2B/2C audit apparatus (50 files, 16,442 lines) was removed on
-2026-07-29 once its findings were recorded. It validated a model that has since
-been replaced. Recover any of it with:
+2026-07-29 once its findings were recorded. Recover any of it with:
 
 ```bash
 git show pre-cleanup-2026-07-29:src/mobo_kit/<file>.py
-git show pre-cleanup-2026-07-29:docs/STEP2C_ROBUSTNESS_HANDOFF.md
+git show 19591cc:docs/D2D_CAMPAIGN_SPEC.md
 ```
 
-Two files there are worth knowing about rather than rediscovering:
-
-- `src/mobo_kit/d2d_scores.py` — the three objective formulas computed from raw
-  measurement columns, with per-row tolerance comparison and warning/error
-  severities. It is open issue 2 already written, with the polarity inverted.
-- `docs/D2D_CAMPAIGN_SPEC.md` — the Step 1 data contract, deleted 2026-07-29.
-  Its input grid and on-grid rules now live in `configs/` and are enforced by
-  `design.py` and `campaign.validate_batch`; its thirteen "unresolved decisions
-  blocking real R1" are resolved in the config; and its workbook audit described
-  a revision of `Summary Table.xlsx` that no longer matches the file (it reports
-  duplicate `Uniformity score` headers at Q/T, which the current workbook does
-  not have). Recover with `git show 19591cc:docs/D2D_CAMPAIGN_SPEC.md`.
+`d2d_scores.py` in that tag is the objective-from-raw-columns computation with the
+polarity inverted — it treated the stored score cells as authoritative. It became
+`scores.py`, the other way round.
 
 ## Working advice
 
-Develop against **DTLZ2**, not the campaign workbook. The experimental group has
-described the current numbers as test data, and several turns of this project went
-into forensics on 15 rows that may be replaced. The synthetic path gives a known
-answer to score against, and anything data-specific lives in config — so a new
-dataset means a new YAML, not new code.
+Develop against **DTLZ2**, not the campaign workbook. The group has described the
+current numbers as test data, and several turns of this project went into forensics
+on 15 rows that may be replaced. The synthetic path gives a known answer to score
+against, and anything data-specific lives in config — so a new dataset means a new
+YAML, not new code.
+
+Two process rules this project learned the hard way, both worth keeping:
+**verification gates the commit** — run the tests as their own step, never in the
+same breath as `git commit` — and **an order-dependent or timing-sensitive test
+failure is a real defect until proven otherwise**, in the test or in the product.
+Both of those cost a commit-with-a-red-suite before they were adopted.

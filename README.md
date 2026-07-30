@@ -33,21 +33,31 @@ reproducibility can be measured.
 
 ```python
 from mobo_kit.campaign import load_campaign_config, run_r0_lhs, run_r1_ucb, run_r2_qlognehvi
+from mobo_kit.workbook_io import read_campaign_workbook
 
 config = load_campaign_config("configs/campaign_d2d_perovskite.yaml")
 
-r0 = run_r0_lhs(config, n=15)                       # space-filling, no model
-r1 = run_r1_ucb(config, X_phys, Y_model, n=5)       # after R0 is measured
-r2 = run_r2_qlognehvi(config, X_phys, Y_model, n=3) # after R1 is measured
+r0 = run_r0_lhs(config, n=15)                        # space-filling, no model
+
+# objective values are computed from the raw measurement columns, not read from
+# the workbook's stored score cells -- three of those are pasted literals
+contents = read_campaign_workbook("local_inputs/Summary Table.xlsx", config)
+X_phys = contents.inputs.to_numpy(float)
+Y_model = contents.model_values.to_numpy(float)      # in objective order
+assert contents.errors == ()                         # fail closed before fitting
+
+r1 = run_r1_ucb(config, X_phys, Y_model, n=5)        # after R0 is measured
+r2 = run_r2_qlognehvi(config, X_phys, Y_model, n=3)  # after R1 is measured
 ```
 
 Each call returns a `RoundResult` with `conditions` (distinct recipes, physical
 units), `replicates` (one row per film, grouped), and `diagnostics` (seed, pool
-size, and a validity report).
+size, fit warnings, and a validity report).
 
-**New to this repo?** Read `docs/HANDOFF.md` first — reading order, open issues in
-priority order, and the questions already settled. `docs/CAMPAIGN_STATUS.md` is the
-working guide: what to pass, what comes back, how to plot it.
+**New to this repo?** Read `docs/HANDOFF.md` first — reading order, where the
+project stands, what is genuinely open, and the questions already settled.
+`docs/CAMPAIGN_STATUS.md` is the working guide: what to pass, what comes back, and
+the evidence behind each decision.
 
 ## Running a round without writing code
 
@@ -108,6 +118,13 @@ every seed, which is the honest expectation for 8 added points in 10 dimensions.
 
 `python scripts/plot_dtlz2_report.py` renders the round-by-round GP fit,
 uncertainty, acquisition surface and selected batch.
+
+The two tuned parameters were checked the same way. `scripts/dtlz2_parameter_sweep.py`
+sweeps `beta` against the local-penalization `radius`, 8 seeds per cell, under a
+decision rule written before the numbers existed — and the answer was to keep
+`beta = 4.0` and `radius = 0.25`, because the whole grid is flat within one
+per-seed standard deviation. That is the outcome that says a default was not a
+lucky pick.
 
 ## Repository layout
 
