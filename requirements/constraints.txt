@@ -1,5 +1,14 @@
-# Step 1 CPU-tested direct dependency stack. Keep these versions synchronized
-# with pyproject.toml and docs/STEP1_HANDOFF.md.
+# The CPU-tested dependency stack. Keep these versions synchronized with the
+# ranges in pyproject.toml, which are deliberately wider: this file is what was
+# actually tested, pyproject is what is allowed.
+#
+# linear_operator is pinned although pyproject does not declare it -- it is a
+# gpytorch/botorch transitive dependency whose version affects fitted numbers, and
+# on this stack a second-decimal change in LOO R2 is inside the numerical floor
+# (see docs/GP_MODEL_DECISION.md). Pin it so a reproduction is a reproduction.
+#
+# (docs/STEP1_HANDOFF.md, referenced here until 2026-07-30, was removed in the
+# cleanup commit 33f101f. docs/HANDOFF.md is the current entry point.)
 numpy==2.2.6
 pandas==2.3.1
 scikit-learn==1.7.1

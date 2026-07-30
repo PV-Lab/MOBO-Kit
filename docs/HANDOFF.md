@@ -167,6 +167,19 @@ git show 19591cc:docs/D2D_CAMPAIGN_SPEC.md
 polarity inverted — it treated the stored score cells as authoritative. It became
 `scores.py`, the other way round.
 
+## The notebook is a demo, not the campaign path
+
+`notebooks/MOBO_demo_annotated.ipynb` runs the general toolkit API over an
+arbitrary CSV. Every import in it still resolves and no call has drifted, but it
+builds its GPs with `models.fit_gp_models` — the **prior-free** construction that
+`GP_MODEL_DECISION.md` documents as degenerate on small data (ARD lengthscales
+0.13 to 38,000, noise pinned at its floor). Anyone following it as "the recommended
+way" would rebuild the model this project replaced. A scope note at the top of the
+notebook now says so and points at `campaign.fit_campaign_models`.
+
+`models.py` is kept because the notebook and the older `main.py` path use it. It is
+legacy, not dead, and it is not what a round runs.
+
 ## Working advice
 
 Develop against **DTLZ2**, not the campaign workbook. The group has described the
