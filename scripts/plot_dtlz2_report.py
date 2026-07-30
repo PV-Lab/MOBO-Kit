@@ -32,9 +32,9 @@ from botorch.utils.multi_objective.pareto import is_non_dominated
 from matplotlib.colors import LinearSegmentedColormap
 
 from mobo_kit.campaign import (
-    _fit_models,
-    _normalise,
     build_objective_transform,
+    fit_campaign_models,
+    normalise_inputs,
     run_r0_lhs,
     run_r1_ucb,
     run_r2_qlognehvi,
@@ -122,7 +122,7 @@ def slice_grid():
 def surfaces(X_phys, Y_raw, seed=73):
     """Posterior utility mean/sd and the UCB-HVI acquisition over the slice."""
     axis, xx, yy, pts = slice_grid()
-    model = _fit_models(CFG, X_phys, _normalise(DESIGN, X_phys), Y_raw, seed)
+    model, _fit_warnings = fit_campaign_models(CFG, X_phys, Y_raw, seed=seed)
     grid_t = torch.tensor(pts, dtype=torch.double)
 
     model.eval()

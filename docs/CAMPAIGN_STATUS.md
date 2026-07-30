@@ -90,7 +90,8 @@ from mobo_kit.campaign import (
 
 # same normalisation, structured means, variant and seeding as the round itself,
 # so this reproduces the round's model rather than a similar one
-model = fit_campaign_models(config, X_phys, Y_model, seed=73)
+model, fit_warnings = fit_campaign_models(config, X_phys, Y_model, seed=73)
+assert not fit_warnings          # a fit can succeed and still deserve distrust
 
 model.eval()
 with torch.no_grad():
@@ -208,15 +209,45 @@ Two conventions that fail *silently* if got wrong, both now covered:
 
 ## Open issues -- read before trusting a batch
 
-1. **An unexplained 0.089 discrepancy on optoelectronic.** Two implementations of
-   the same pipeline on the same 15 rows give LOO R2 +0.355 (two-stage) and
-   +0.267 (mean module). Ruled out: the mean feature (verified raw `anneal_temp`,
-   not logged) and sampling noise (no resampling involved). Also ruled out: the
-   residual-vs-target standardization scale, whose direction contradicts the
-   observed asymmetry. Untested suspects: MLL optimiser seeding, and the
-   training-target interaction with the fitted outputscale. Both numbers are far
-   better than plain (-0.342), so the direction is not in doubt -- but the gap
-   should be closed before optoelectronic candidates are acted on.
+1. **The 0.089 discrepancy on optoelectronic — narrowed 2026-07-30, not closed.**
+   Two implementations of the same pipeline on the same 15 rows give LOO R2 +0.355
+   (two-stage) and +0.267 (mean module). Reproduced exactly: **+0.0881**.
+
+   **MLL optimiser seeding is ruled out.** Both pipelines give bit-identical LOO R2
+   across seeds 7, 73, 137 and 2024 — 0.3551 and 0.2670 every time, zero variation.
+   That suspect is closed.
+
+   **The standardization-scale suspect is back, and quantitatively consistent.** It
+   was previously recorded as ruled out "because the direction contradicts the
+   observed asymmetry"; the measured direction does not contradict it. The two
+   pipelines hand `Standardize` different things — two-stage standardizes the
+   *residual*, the mean module standardizes the *target* and then subtracts a
+   standardized trend — so the deviation the covariance must explain has sd 1.0 in
+   one and `sd(residual)/sd(target) = 0.762` in the other. The fitted outputscales
+   match that prediction to 4%:
+
+   | | median outputscale | median noise (standardized) |
+   |---|---:|---:|
+   | two-stage | 0.8365 | 0.006516 |
+   | mean module | 0.4681 | 0.006443 |
+   | predicted for the mean module, `0.8365 × 0.762²` | 0.4859 | — |
+
+   **The attempt to confirm it failed, and the test was the problem, not the
+   hypothesis.** Inflating the residual to the target's sd before fitting moved LOO
+   R2 by +0.0002 — because `Standardize` divides by whatever sd it is given, so
+   scaling its input is a no-op. That experiment was vacuous by construction and
+   proves nothing either way. Recorded so nobody re-runs it.
+
+   **The specific next test**, for whoever picks this up: the two pipelines cannot
+   be separated while both re-standardize, so disable `Standardize` in both (or
+   standardize both by the same fixed constant) and see whether the gap survives.
+   If it vanishes, the cause is that the outputscale and noise priors are defined
+   on standardized units and the two pipelines standardize different quantities.
+   That is a ~20-line experiment against `_build_single_task_gp`.
+
+   Both numbers remain far better than plain (-0.342), so the direction is not in
+   doubt and the mean module stays either way. The gap should be closed before
+   optoelectronic candidates are acted on.
 
 2. **Done, 2026-07-30 — kept here because the audit is the evidence for how the
    objectives are now computed.** Three of the workbook's derived columns are
@@ -358,13 +389,110 @@ Two conventions that fail *silently* if got wrong, both now covered:
    condition rather than hoping data produces it. No fit on the current R0 data
    warns, so nothing about the live campaign changed.
 
-7. **Not started:** replicate-variance pooling into `train_Yvar` (Phase 4) — and
-   `read_candidate_results().replicate_spread` now hands it the numbers. The
+7. **Phase 4 is wired and waiting for data (2026-07-30).** `replicate_variance.py`
+   pools between-film variance from the replicate scatter and hands it to the model
+   as `train_Yvar`; `run_r1_ucb` / `run_r2_qlognehvi` / `fit_campaign_models` take
+   `observed_Yvar`, and the launcher builds it automatically once the config asks.
+   Enabling it when the triplicates land is one key —
+   `model.observation_noise: replicate_pooled` — which is the point of wiring it
+   before the data exists. Tested against synthetic replicates.
+
+   Four things worth knowing before touching it:
+
+   * **The variance handed over is of the MEAN**, `pooled / n_films`, because the
+     observation is an average of n films. Passing the single-film variance
+     understates it threefold on a triplicate and nothing errors.
+   * **Between-film and within-film are different quantities.** Between-film is
+     what `train_Yvar` needs. The within-film 0.0593 on `log T` (24 dof) contains
+     no run-to-run variation at all, so it is a **floor**: if the pooled
+     between-film variance ever lands below it, films would be more reproducible
+     than points on one film, and `sanity_floor_findings` says so.
+   * **BoTorch silently ignores `train_Yvar` if a `likelihood` is also passed.**
+     Verified on 0.15.1: the likelihood wins, stays single-element, and the
+     replicate information is dropped with no error. `_build_single_task_gp` passes
+     one or the other, never both.
+   * **`Standardize` rescales `train_Yvar` along with the targets**, so it must
+     arrive in the target's own units — and in the model's space, which for
+     thickness is `log T`, not nanometres. That is why aggregation and variance
+     pooling are required to share one space.
+
+   Zero pooled variance is refused rather than passed on: replicate films that
+   agree to the last digit are a transcription, not a measurement, and a zero
+   `train_Yvar` tells the model the observation is exact.
+
+8. **Not started:** the legacy leftovers below. The
    tkinter launcher landed 2026-07-30 (`launcher.py`, plus the two double-click
    scripts; see the README). The legacy debug ceremony is already gone:
    `production_gate.py` and 22 other Step 1/2A/2B/2C modules were removed in
    `33f101f`, and `test_validity_report_carries_no_approval_flags` holds the
    approval tiers out.
+
+## Are beta = 4.0 and radius = 0.25 defensible?
+
+`scripts/dtlz2_parameter_sweep.py`, 8 seeds per cell, `min_batch_distance` fixed at
+0.15. Metric is mean hypervolume gain over the R0 start for the 8 points R1 and R2
+add, against a random on-grid baseline at the same budget (+0.0453 in every cell,
+since it does not depend on either knob).
+
+| beta | radius | mean gain | per-seed sd | min spacing | edge coords / 80 |
+|---:|---:|---:|---:|---:|---:|
+| 2 | 0.15 | +0.0816 | 0.0508 | 0.719 | 16.4 |
+| 2 | 0.25 | +0.0781 | 0.0493 | 0.810 | 16.5 |
+| 2 | 0.35 | +0.0801 | 0.0481 | 0.955 | 16.9 |
+| 4 | 0.15 | +0.0776 | 0.0440 | 0.719 | 16.0 |
+| **4** | **0.25** | **+0.0780** | **0.0428** | **0.891** | **16.8** |
+| 4 | 0.35 | +0.0961 | 0.0735 | 0.982 | 17.0 |
+| 8 | 0.15 | +0.0868 | 0.0523 | 0.871 | 16.9 |
+| 8 | 0.25 | +0.0868 | 0.0523 | 0.871 | 16.9 |
+| 8 | 0.35 | +0.0839 | 0.0458 | 0.953 | 17.2 |
+
+**No change.** The pre-committed rule required a challenger to beat +0.0780 by more
+than the per-seed sd of 0.0428 — that is, to exceed +0.1208 — without reducing
+spacing; seven cells have a higher mean and none comes close, the whole grid
+spanning +0.0776 to +0.0961 against sds of 0.043 to 0.074. BO beats the random
+baseline on the mean in 9 of 9 cells, so the sweep is measuring optimisation rather
+than noise, and the edge-coordinate count is flat at 16–17 of 80 across every cell,
+which says neither knob is what drives batches onto range edges (on the live
+campaign that was the monotone `anneal_temp` mean function).
+
+**One limit worth stating**: `radius` is not binding on this problem. Achieved
+batch spacings are 0.72–0.98, far above every radius tested, so local penalization
+rarely has two candidates close enough to penalise — visible in `beta=8` giving
+identical results at radius 0.15 and 0.25. This sweep therefore validates `beta`
+properly and says little about `radius`; a problem with a tighter optimum would be
+needed for that.
+
+## When new data arrives
+
+One command:
+
+```bash
+python scripts/intake_new_data.py --workbook "local_inputs/Summary Table.xlsx"
+```
+
+The group has always called the current numbers test data, so a replacement was
+expected. When it lands, the question is not whether the code runs — the tests
+answer that — but whether the model commitments this campaign made still earn
+their place on the new rows. Several were justified by measurements on 15 specific
+rows and do not transfer.
+
+It prints, per objective: the read audit and its findings; whether the declared
+`mean_function` still beats the leave-one-out null by more than the resolution
+floor, naming the exact config block to delete if not; the fit guard's status,
+including the case where the mean function explains so much that the residual GP
+collapses; whether the fixed anchors still span the data; and whether the
+campaign-fixed scaling guard passes.
+
+**Both floors are recomputed at the new N rather than reused.** The null is
+`1 - (N/(N-1))²` — −0.148 at 15, −0.105 at 21, −0.069 at 31. The ±0.236 resolution
+figure was a bootstrap at N=15 and is rescaled by `sqrt(15/N)`, labelled in the
+output as an estimate: re-run the bootstrap if a decision turns on the third
+decimal.
+
+On the current 15 rows it reports: uniformity does not beat the null (−0.681),
+optoelectronic keeps its mean function (−0.342 → +0.267, swing +0.609), thickness
+keeps its mean function (+0.116 → +0.381, swing +0.265). The guard is clean for
+both.
 
 ## Reproducing the analysis
 
@@ -372,6 +500,8 @@ Two conventions that fail *silently* if got wrong, both now covered:
 python scripts/gp_diagnostic.py --variants legacy_matern_no_prior dim_scaled_prior
 python scripts/validate_structured_means.py
 python scripts/thickness_objective_check.py
+python scripts/dtlz2_parameter_sweep.py            # beta x radius, needs no data
 ```
 
-These need the ignored private workbook at `local_inputs/Summary Table.xlsx`.
+All but the sweep need the ignored private workbook at
+`local_inputs/Summary Table.xlsx`.

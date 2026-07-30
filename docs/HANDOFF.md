@@ -18,7 +18,7 @@ Then verify the state yourself in one command:
 pytest -q
 ```
 
-Expect **399 passed, 0 failed** (~90 s). If that holds, everything below is true.
+Expect **423 passed, 0 failed** (~2 min). If that holds, everything below is true.
 
 Two of those tests open a real tkinter window and drive it; they skip themselves
 if there is no display.
@@ -74,14 +74,14 @@ measurement becomes a utility), and new orchestration on top.
    `speed_1 = 1000` avoidance turned out to be the mean function extrapolating
    rather than a local average, is in `CAMPAIGN_STATUS.md` issue 4. Someone still
    has to read it and decide — that part is not automatable and is not automated.
-5. **Replicate variance into `train_Yvar`** (needs R1 measurements, so it is
-   gated on the batch shipping). Both config decisions are now made and recorded:
-   thickness variance pools in **log space**, and
-   `read_candidate_results().replicate_spread` already returns it there. What is
-   left is passing it to the model and deciding the R0 policy — the R0 rows have
-   no replicate films, but they do have 2-4 thickness points each, pooling to a
-   within-row sd of `log T` of 0.244 over 24 dof. That is within-film spread, not
-   film-to-film, so it is a floor rather than an estimate.
+5. ~~Replicate variance into `train_Yvar`.~~ **Wired 2026-07-30, waiting on data.**
+   `replicate_variance.py` pools it, the rounds and the launcher accept it, and
+   enabling it once the R1 triplicates land is one config key
+   (`model.observation_noise: replicate_pooled`). Tested against synthetic
+   replicates so the arrival is a data event, not a code event. The traps —
+   variance of the mean not of a film, between-film versus the within-film floor,
+   BoTorch silently ignoring `train_Yvar` when a likelihood is also passed, and
+   `Standardize` rescaling it — are in `CAMPAIGN_STATUS.md` issue 7.
 6. ~~`metrics.compute_ref_pareto_hv` has a degenerate auto-reference.~~ **Done
    2026-07-30.** The `ref_point_np=None` path is gone: a missing reference now
    raises and names `reference_point_utility`. The same function also refuses a
@@ -93,6 +93,16 @@ measurement becomes a utility), and new orchestration on top.
    Pareto set itself does — which is what a real trade-off front looks like.
    `tests/test_metrics.py` pins that condition; there were **no tests at all** on
    this function before, which is how it survived.
+
+## Settled by measurement on 2026-07-30
+
+- **`beta = 4.0` and `radius = 0.25` stay.** A 3x3 sweep on DTLZ2, 8 seeds per
+  cell, under a rule committed before the numbers existed: no cell beat the
+  default by more than one per-seed sd while holding spacing. Flat within noise,
+  which is what says the default was not a lucky pick. Table in
+  `CAMPAIGN_STATUS.md`. Do not re-sweep without a reason; do note that `radius`
+  was **not** properly tested, because DTLZ2 batches land 0.72–0.98 apart and
+  never come within any tested radius.
 
 ## Things not to redo
 

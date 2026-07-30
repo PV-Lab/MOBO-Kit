@@ -319,9 +319,14 @@ thing to collect there is more thickness points per film — not only more films
 
 ## Open
 
-- **The unexplained 0.089 on optoelectronic** — +0.355 (two-stage) against
-  +0.267 (mean module), same pipeline, same 15 rows. What has been ruled out is
-  in `CAMPAIGN_STATUS.md`, open issue 1.
+- **The 0.089 on optoelectronic** — +0.355 (two-stage) against +0.267 (mean
+  module), same pipeline, same 15 rows, reproduced at +0.0881. MLL optimiser
+  seeding is now ruled out (bit-identical across four seeds). The
+  standardization-scale mechanism is quantitatively consistent — fitted
+  outputscales 0.8365 and 0.4681 against 0.4859 predicted — but unconfirmed, and
+  the earlier note that it was ruled out on directional grounds does not hold.
+  Numbers, the failed experiment and the specific next test are in
+  `CAMPAIGN_STATUS.md`, open issue 1.
 - **Does linear-mean-plus-GP beat linear-mean-alone?** +0.355 against +0.244 is
   0.47 sd of the ±0.236 floor, so the observed gap is not evidence either way.
   The test rides along with the optoelectronic permutation run.

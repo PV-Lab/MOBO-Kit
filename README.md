@@ -123,6 +123,7 @@ src/mobo_kit/
   structured_mean.py      physics-informed GP mean functions
   scores.py               measurement columns -> objective values, cross-checked
   objectives.py           objective value -> utility contract
+  replicate_variance.py   replicate films -> observation variance (train_Yvar)
   batch_review.py         what a proposed batch says, before anyone fabricates it
   launcher.py             the one-button loop, and the tkinter window over it
   ucb_hvi.py              UCB hypervolume-improvement scoring (R1)
@@ -137,8 +138,8 @@ src/mobo_kit/
 
 configs/   campaign_d2d_perovskite.yaml (the live campaign) + two examples
 docs/      HANDOFF.md, CAMPAIGN_STATUS.md, GP_MODEL_DECISION.md
-scripts/   diagnostics and report figures
-tests/     399 tests
+scripts/   diagnostics, report figures, intake_new_data.py, dtlz2_parameter_sweep.py
+tests/     423 tests
 launch_mobo_kit.bat, launch_mobo_kit.command   double-click entry points
 ```
 

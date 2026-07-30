@@ -1,0 +1,267 @@
+"""One command to run when the experimental group returns new or corrected data.
+
+    python scripts/intake_new_data.py --workbook "local_inputs/Summary Table.xlsx"
+
+The group has always described the current numbers as test data, so a replacement
+was expected from the start.  When it arrives, the question is not "does the code
+still run" -- the tests answer that -- but "does the model this campaign committed
+to still earn its place on THIS data".  Several of those commitments were justified
+by measurements on 15 specific rows, and a new dataset does not inherit them.
+
+So this checks, per objective:
+
+* whether the objectives can be computed at all, and what the read notices;
+* whether each declared ``mean_function`` still beats the leave-one-out null by
+  more than the resolution floor -- and if it does not, names the exact config
+  block to delete;
+* whether the fit guard has anything to say, including the case where the mean
+  function explains so much that the residual GP collapses;
+* whether the fixed objective anchors still span the data;
+* whether the campaign-fixed scaling guard still passes.
+
+**Both floors are recomputed at the new N rather than reused.**  The null is
+``1 - (N/(N-1))^2``, which moves with N: -0.148 at 15, -0.105 at 21, -0.069 at 31.
+The resolution floor of +-0.236 was a parametric bootstrap at N=15 and shrinks
+roughly as ``1/sqrt(N)``; the estimate printed here is scaled that way and is
+labelled as an estimate, because the honest version is to re-run the bootstrap.
+
+Nothing here decides anything. It prints what the data supports so a human can.
+"""
+
+from __future__ import annotations
+
+import argparse
+import math
+import warnings
+from pathlib import Path
+
+import numpy as np
+import torch
+
+from mobo_kit.campaign import (
+    assert_scaling_is_campaign_fixed,
+    build_objective_transform,
+    load_campaign_config,
+    normalise_inputs,
+    objective_names,
+)
+from mobo_kit.model_validation import (
+    DIM_SCALED_PRIOR,
+    SIGNAL_COLLAPSE_STAGE,
+    ModelFitError,
+    fit_model_variant,
+)
+from mobo_kit.scores import ScoreSeverity
+from mobo_kit.structured_mean import build_structured_mean, mean_spec_from_config
+from mobo_kit.workbook_io import read_campaign_workbook
+
+#: Bootstrap sd of LOO R2 measured at N=15. Scaled by sqrt(15/N) below, which is an
+#: approximation -- re-run the bootstrap if a decision turns on the third decimal.
+RESOLUTION_SD_AT_15 = 0.236
+RESOLUTION_REFERENCE_N = 15
+
+
+def null_loo_r2(n: int) -> float:
+    """Predicting the leave-one-out mean gives this, independent of the data."""
+    return 1.0 - (n / (n - 1)) ** 2
+
+
+def resolution_sd(n: int) -> float:
+    return RESOLUTION_SD_AT_15 * math.sqrt(RESOLUTION_REFERENCE_N / n)
+
+
+def _loo_r2(X_norm, X_phys, y, mean_spec, names, lowers, uppers, seed=73):
+    """Exact leave-one-out R2 for one objective, refitting the trend per fold.
+
+    The linear coefficients are refit inside every fold on the training rows only.
+    Fitting them once on everything and holding them fixed leaks the held-out value
+    into the trend and flatters the result.
+    """
+    n = len(y)
+    predictions = np.empty(n)
+    collapse_warnings: list[str] = []
+    for held in range(n):
+        keep = [i for i in range(n) if i != held]
+        target = y[keep]
+        module = None
+        if mean_spec is not None:
+            module, target = build_structured_mean(
+                X_phys[keep], y[keep], mean_spec, names, lowers, uppers
+            )
+        torch.manual_seed(seed)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            record = fit_model_variant(
+                torch.tensor(X_norm[keep], dtype=torch.double),
+                torch.tensor(target, dtype=torch.double).unsqueeze(-1),
+                sample_ids=tuple(range(len(keep))),
+                objective_names=("y",),
+                variant=DIM_SCALED_PRIOR,
+                seed=seed,
+                mean_module=module,
+            )
+        collapse_warnings.extend(
+            w.message for w in record.warnings if w.stage == SIGNAL_COLLAPSE_STAGE
+        )
+        gp = record.model.models[0]
+        gp.eval()
+        with torch.no_grad():
+            value = float(
+                gp.posterior(
+                    torch.tensor(X_norm[held : held + 1], dtype=torch.double)
+                ).mean.reshape(-1)[0]
+            )
+        # a log-response mean function means the model emits log(y)
+        predictions[held] = (
+            math.exp(value) if mean_spec is not None and mean_spec.response == "log" else value
+        )
+    ss_res = float(np.sum((y - predictions) ** 2))
+    ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+    return 1.0 - ss_res / ss_tot, collapse_warnings
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--workbook", required=True)
+    parser.add_argument("--config", default="configs/campaign_d2d_perovskite.yaml")
+    parser.add_argument(
+        "--skip-model",
+        action="store_true",
+        help="audit and anchors only; skip the leave-one-out refits",
+    )
+    args = parser.parse_args()
+
+    config = load_campaign_config(args.config)
+    names = list(objective_names(config))
+    print("=" * 78)
+    print(f"INTAKE: {Path(args.workbook).name}")
+    print("=" * 78)
+
+    # ---------------------------------------------------------------- audit --
+    contents = read_campaign_workbook(args.workbook, config)
+    n = contents.n_rows
+    print(f"\n1. READ  {n} rows, objectives {tuple(names)}")
+    errors = contents.errors
+    warnings_found = contents.warnings
+    notes = [f for f in contents.findings if f.severity is ScoreSeverity.NOTE]
+    print(f"   errors {len(errors)}   warnings {len(warnings_found)}   notes {len(notes)}")
+    for finding in errors:
+        print(f"   ERROR   {finding}")
+    for finding in warnings_found:
+        print(f"   warning {finding}")
+    if errors:
+        print("\n   Objectives cannot be computed for every row. Stopping: every")
+        print("   number below would be about a subset nobody chose.")
+        return 1
+
+    # ------------------------------------------------------------- contract --
+    print("\n2. CONTRACT")
+    try:
+        assert_scaling_is_campaign_fixed(config)
+        print("   scaling guard          PASS (scales are campaign-fixed)")
+    except Exception as exc:
+        print(f"   scaling guard          FAIL: {exc}")
+        return 1
+
+    transform = build_objective_transform(config)
+    for index, spec in enumerate(transform.specs):
+        column = contents.model_values[names[index]]
+        low, high = float(column.min()), float(column.max())
+        if spec.transform == "affine":
+            inside = spec.lower_anchor <= low and high <= spec.upper_anchor
+            verdict = "PASS" if inside else "OUT OF RANGE"
+            print(
+                f"   {spec.name:<16} anchors [{spec.lower_anchor:g}, "
+                f"{spec.upper_anchor:g}] vs data [{low:.4g}, {high:.4g}]  {verdict}"
+            )
+            if not inside:
+                print(
+                    "        -> widen the anchors DELIBERATELY and bump "
+                    "objectives.contract_version; do not let them track the data."
+                )
+        else:
+            print(f"   {spec.name:<16} target {spec.target:g} vs data [{low:.4g}, {high:.4g}]")
+
+    # ---------------------------------------------------------------- floors --
+    null = null_loo_r2(n)
+    floor = resolution_sd(n)
+    print(f"\n3. FLOORS AT N={n}")
+    print(f"   null LOO R2            {null:+.4f}   (was {null_loo_r2(15):+.4f} at N=15)")
+    print(f"   resolution sd          +-{floor:.4f}  (estimated by sqrt(15/N) from "
+          f"{RESOLUTION_SD_AT_15}; re-run the bootstrap if a call is close)")
+
+    if args.skip_model:
+        print("\n4. MODEL  skipped (--skip-model)")
+        return 0
+
+    # ----------------------------------------------------------------- model --
+    print(f"\n4. PER-OBJECTIVE VERDICT  (a mean function must beat plain by > {floor:.3f})")
+    design_names = [item["name"] for item in config["inputs"]]
+    lowers = np.array([float(i["start"]) for i in config["inputs"]])
+    uppers = np.array([float(i["stop"]) for i in config["inputs"]])
+    X_phys = contents.inputs.to_numpy(float)
+    X_norm = normalise_inputs(config, X_phys)
+
+    entries = config["objectives"]["specs"]
+    for index, (name, entry) in enumerate(zip(names, entries)):
+        y = contents.model_values[name].to_numpy(float)
+        mean_spec = mean_spec_from_config(entry)
+        print(f"\n   {name}")
+        try:
+            plain, plain_warnings = _loo_r2(
+                X_norm, X_phys, y, None, design_names, lowers, uppers
+            )
+            print(f"     plain GP             LOO R2 {plain:+.4f}")
+        except ModelFitError as exc:
+            print(f"     plain GP             REFUSED: {exc.cause}")
+            plain, plain_warnings = float("nan"), []
+
+        if mean_spec is None:
+            print("     no mean function declared")
+            verdict = "beats the null" if plain > null else "does NOT beat the null"
+            print(f"     verdict              {verdict} ({plain:+.4f} vs {null:+.4f})")
+            continue
+
+        try:
+            structured, structured_warnings = _loo_r2(
+                X_norm, X_phys, y, mean_spec, design_names, lowers, uppers
+            )
+            print(f"     with mean function   LOO R2 {structured:+.4f}")
+        except ModelFitError as exc:
+            print(f"     with mean function   REFUSED: {exc.cause}")
+            print("     verdict              DELETE the mean_function block: the fit")
+            print(f"                          is refused outright for {name}.")
+            continue
+
+        for message in dict.fromkeys(plain_warnings + structured_warnings):
+            print(f"     GUARD                {message}")
+        if not structured_warnings:
+            print("     guard status         clean")
+
+        swing = structured - plain
+        clears_floor = swing > floor
+        beats_null = structured > null
+        print(f"     swing                {swing:+.4f}  (floor {floor:.4f})")
+        if clears_floor and beats_null:
+            print("     verdict              KEEP the mean function: it clears the")
+            print("                          resolution floor and beats the null.")
+        elif beats_null:
+            print("     verdict              INCONCLUSIVE: beats the null but the swing")
+            print("                          is inside the floor, so plain and structured")
+            print("                          are not distinguishable at this N.")
+        else:
+            features = ", ".join(f.column for f in mean_spec.features)
+            print("     verdict              DELETE the mean function. It does not beat")
+            print(f"                          the null at N={n}. Remove this block from")
+            print(f"                          {Path(args.config).name}:")
+            print(f"                            objectives.specs[{index}].mean_function")
+            print(f"                            (response: {mean_spec.response}, "
+                  f"features: {features})")
+
+    print("\n" + "=" * 78)
+    print("Nothing above is a decision. It is what the new data supports.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
