@@ -79,6 +79,7 @@ Documentation = "https://github.com/PV-Lab/MOBO-Kit#readme"
 [project.scripts]
 mobo-kit = "mobo_kit.cli:main"
 mobo-kit-run = "mobo_kit.main:main"
+mobo-kit-launcher = "mobo_kit.launcher:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

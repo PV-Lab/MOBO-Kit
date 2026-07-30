@@ -1,0 +1,404 @@
+"""The launcher's decisions, tested without a display.
+
+The tkinter window is a thin shell over `inspect_campaign`, `gather_observations`
+and `generate_next_round`; those are what can go wrong, so those are what is
+tested here. Importing `mobo_kit.launcher` must not require tkinter, and one test
+asserts that.
+"""
+
+from __future__ import annotations
+
+import shutil
+
+import numpy as np
+import pandas as pd
+import pytest
+from openpyxl import load_workbook
+
+from mobo_kit.campaign import (
+    load_campaign_config,
+    measurement_entry_columns,
+    objective_names,
+)
+from mobo_kit.launcher import (
+    CampaignStatus,
+    LauncherError,
+    gather_observations,
+    generate_next_round,
+    inspect_campaign,
+)
+from mobo_kit.workbook_io import (
+    CandidateSheetError,
+    candidate_workbook_path,
+    read_candidate_results,
+    sheet_name_for_round,
+    write_candidate_sheet,
+)
+
+CONFIG_PATH = "configs/campaign_d2d_perovskite.yaml"
+SOURCE = "local_inputs/Summary Table.xlsx"
+
+pytestmark = pytest.mark.skipif(
+    not __import__("pathlib").Path(SOURCE).exists(),
+    reason="requires the ignored private campaign workbook",
+)
+
+
+@pytest.fixture(scope="module")
+def config() -> dict:
+    return load_campaign_config(CONFIG_PATH)
+
+
+@pytest.fixture
+def workbook(tmp_path):
+    destination = tmp_path / "Summary Table.xlsx"
+    shutil.copy2(SOURCE, destination)
+    return destination
+
+
+def _conditions(config: dict, n: int = 5) -> pd.DataFrame:
+    names = [item["name"] for item in config["inputs"]]
+    rows = [
+        [float(item["start"]) + i * float(item["step"]) for item in config["inputs"]]
+        for i in range(n)
+    ]
+    return pd.DataFrame(rows, columns=names)
+
+
+def _fill_candidate_sheet(
+    path, config, *, thickness=(700.0, 720.0), rows=None, coverage=1.0
+) -> None:
+    """Enter plausible measurements into every film of an R1 sheet."""
+    book = load_workbook(path)
+    sheet = book[sheet_name_for_round("R1")]
+    headers = [cell.value for cell in sheet[1]]
+    values = {
+        "Coverage": coverage,
+        "Uniformity": 0.3,
+        "Phase purity": 0.95,
+        "PL - Implied Voc (Max)": 0.05,
+        "Photoconductance (Max)": 5e-07,
+        "T1": thickness[0],
+        "T2": thickness[1],
+    }
+    target_rows = rows or range(2, sheet.max_row + 1)
+    for row in target_rows:
+        for column, value in values.items():
+            sheet.cell(row=row, column=headers.index(column) + 1).value = value
+    book.save(path)
+
+
+# --------------------------------------------------------------------------- #
+# status
+# --------------------------------------------------------------------------- #
+
+
+def test_a_fresh_workbook_is_ready_for_r1(workbook, config) -> None:
+    status = inspect_campaign(workbook, config)
+    assert status.next_round == "R1"
+    assert status.can_generate
+    assert status.observed_conditions == 15
+    assert "Ready to propose R1" in status.headline
+
+
+def test_the_detail_text_surfaces_the_read_findings(workbook, config) -> None:
+    """The experimentalist should see that samples 8, 12 and 15 hold thickness
+    readings that disagree, without going looking for it."""
+    detail = inspect_campaign(workbook, config).detail()
+    assert "Worth a look" in detail
+    assert "1600" in detail and "709" in detail
+    assert "For the record" in detail  # the excluded T anom readings
+
+
+def test_a_missing_workbook_is_a_plain_sentence(tmp_path, config) -> None:
+    with pytest.raises(LauncherError, match="does not exist"):
+        inspect_campaign(tmp_path / "nope.xlsx", config)
+
+
+def test_an_unmeasured_r1_sheet_blocks_the_next_round(workbook, config) -> None:
+    write_candidate_sheet(workbook, config, _conditions(config), round_name="R1")
+    status = inspect_campaign(workbook, config)
+    assert not status.can_generate
+    assert "no results have been entered" in status.reason
+    assert "Coverage" in status.reason  # says what to fill in
+
+
+# --------------------------------------------------------------------------- #
+# observations
+# --------------------------------------------------------------------------- #
+
+
+def test_r1_trains_on_sheet1_alone(workbook, config) -> None:
+    X, Y, provenance = gather_observations(workbook, config, for_round="R1")
+    assert X.shape == (15, 10)
+    assert Y.shape == (15, 3)
+    assert provenance == ["Sheet1: 15 conditions"]
+
+
+def test_r2_trains_on_sheet1_plus_the_aggregated_r1_conditions(
+    workbook, config
+) -> None:
+    """Three films are one design point, so R2 sees 15 + 5, not 15 + 15."""
+    out = write_candidate_sheet(workbook, config, _conditions(config), round_name="R1")
+    _fill_candidate_sheet(out, config)
+    X, Y, provenance = gather_observations(workbook, config, for_round="R2")
+    assert X.shape == (20, 10)
+    assert Y.shape == (20, 3)
+    assert "5 conditions from 15 films" in provenance[1]
+
+
+def test_gathering_refuses_a_half_measured_film(workbook, config) -> None:
+    out = write_candidate_sheet(workbook, config, _conditions(config), round_name="R1")
+    _fill_candidate_sheet(out, config)
+    book = load_workbook(out)
+    sheet = book[sheet_name_for_round("R1")]
+    headers = [cell.value for cell in sheet[1]]
+    # blank every thickness reading of one whole condition
+    for row in (2, 3, 4):
+        for column in ("T1", "T2"):
+            sheet.cell(row=row, column=headers.index(column) + 1).value = None
+    book.save(out)
+
+    with pytest.raises(LauncherError, match="cannot be turned into objective values"):
+        gather_observations(workbook, config, for_round="R2")
+
+
+# --------------------------------------------------------------------------- #
+# replicate aggregation
+# --------------------------------------------------------------------------- #
+
+
+def test_replicates_aggregate_to_one_observation_per_condition(
+    workbook, config
+) -> None:
+    out = write_candidate_sheet(workbook, config, _conditions(config), round_name="R1")
+    _fill_candidate_sheet(out, config)
+    results = read_candidate_results(workbook, config, "R1")
+    assert results.n_conditions == 5
+    assert len(results.replicates) == 15
+    assert list(results.model_values.columns) == list(objective_names(config))
+    assert (results.films_used["thickness"] == 3).all()
+
+
+def test_thickness_aggregates_as_a_geometric_mean(workbook, config) -> None:
+    """`response: log` means the GP trains on log(T), so three films are averaged
+    in that space. With identical films the two means agree, which is why the
+    check uses films that differ."""
+    out = write_candidate_sheet(workbook, config, _conditions(config, 1), round_name="R1")
+    book = load_workbook(out)
+    sheet = book[sheet_name_for_round("R1")]
+    headers = [cell.value for cell in sheet[1]]
+    values = {
+        "Coverage": 1.0,
+        "Uniformity": 0.3,
+        "Phase purity": 0.95,
+        "PL - Implied Voc (Max)": 0.05,
+        "Photoconductance (Max)": 5e-07,
+    }
+    per_film = (400.0, 700.0, 1000.0)
+    for offset, thickness in enumerate(per_film):
+        row = 2 + offset
+        for column, value in values.items():
+            sheet.cell(row=row, column=headers.index(column) + 1).value = value
+        sheet.cell(row=row, column=headers.index("T1") + 1).value = thickness
+    book.save(out)
+
+    results = read_candidate_results(workbook, config, "R1")
+    observed = float(results.model_values["thickness"].iloc[0])
+    assert observed == pytest.approx(float(np.exp(np.mean(np.log(per_film)))))
+    assert observed == pytest.approx(654.2, abs=0.1)  # (400*700*1000) ** (1/3)
+    # and not the arithmetic mean, which is 700
+    assert abs(observed - 700.0) > 40.0
+
+
+def test_the_spread_is_kept_in_the_aggregation_space(workbook, config) -> None:
+    """What Phase 4 needs: thickness spread already in log space, matching the
+    config's decision to pool train_Yvar there."""
+    out = write_candidate_sheet(workbook, config, _conditions(config, 1), round_name="R1")
+    book = load_workbook(out)
+    sheet = book[sheet_name_for_round("R1")]
+    headers = [cell.value for cell in sheet[1]]
+    for offset, thickness in enumerate((400.0, 700.0, 1000.0)):
+        row = 2 + offset
+        for column, value in {
+            "Coverage": 1.0,
+            "Uniformity": 0.3,
+            "Phase purity": 0.95,
+            "PL - Implied Voc (Max)": 0.05,
+            "Photoconductance (Max)": 5e-07,
+        }.items():
+            sheet.cell(row=row, column=headers.index(column) + 1).value = value
+        sheet.cell(row=row, column=headers.index("T1") + 1).value = thickness
+    book.save(out)
+
+    results = read_candidate_results(workbook, config, "R1")
+    expected = float(np.std(np.log([400.0, 700.0, 1000.0]), ddof=1))
+    assert float(results.replicate_spread["thickness"].iloc[0]) == pytest.approx(expected)
+    # uniformity is identical across the three films, so its spread is zero
+    assert float(results.replicate_spread["uniformity"].iloc[0]) == pytest.approx(0.0)
+
+
+def test_films_of_one_condition_must_share_a_recipe(workbook, config) -> None:
+    out = write_candidate_sheet(workbook, config, _conditions(config), round_name="R1")
+    _fill_candidate_sheet(out, config)
+    book = load_workbook(out)
+    sheet = book[sheet_name_for_round("R1")]
+    headers = [cell.value for cell in sheet[1]]
+    sheet.cell(row=3, column=headers.index("speed_1") + 1).value = 4242.0
+    book.save(out)
+
+    with pytest.raises(CandidateSheetError, match="do not share the same speed_1"):
+        read_candidate_results(workbook, config, "R1")
+
+
+def test_reading_a_sheet_that_was_never_written_says_so(workbook, config) -> None:
+    with pytest.raises(CandidateSheetError, match="does not exist"):
+        read_candidate_results(workbook, config, "R1")
+
+
+# --------------------------------------------------------------------------- #
+# generating
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.slow
+def test_generating_r1_writes_a_sheet_and_leaves_the_source_alone(
+    workbook, config
+) -> None:
+    import hashlib
+
+    before = hashlib.sha256(workbook.read_bytes()).hexdigest()
+    messages: list[str] = []
+    generated = generate_next_round(workbook, config, progress=messages.append)
+
+    assert generated.round_name == "R1"
+    assert generated.sheet_path == candidate_workbook_path(workbook, "R1")
+    assert generated.sheet_path.exists()
+    assert generated.result.n_conditions == 5
+    assert generated.n_films == 15
+    assert hashlib.sha256(workbook.read_bytes()).hexdigest() == before
+    assert messages and "Done." in messages
+
+    summary = generated.summary()
+    assert "Nothing here is approved" in summary
+    assert "Sheet1: 15 conditions" in summary
+    # the sheet is immediately readable by the reader that will consume it
+    required, _ = measurement_entry_columns(config)
+    headers = [
+        cell.value
+        for cell in load_workbook(generated.sheet_path)[sheet_name_for_round("R1")][1]
+    ]
+    for column in required:
+        assert column in headers
+
+
+def test_generating_refuses_when_no_round_is_due(workbook, config) -> None:
+    write_candidate_sheet(workbook, config, _conditions(config), round_name="R1")
+    with pytest.raises(LauncherError, match="no results have been entered"):
+        generate_next_round(workbook, config)
+
+
+def test_generating_never_overwrites_an_existing_sheet(workbook, config, monkeypatch) -> None:
+    """The sheet may already hold measurements. Refusing is the only safe move,
+    and it must happen before the ten seconds of model fitting, not after."""
+    write_candidate_sheet(workbook, config, _conditions(config), round_name="R1")
+
+    def fail(*args, **kwargs):  # pragma: no cover - must never be reached
+        raise AssertionError("the round was fitted despite an existing sheet")
+
+    monkeypatch.setattr("mobo_kit.launcher.run_r1_ucb", fail)
+    monkeypatch.setattr(
+        "mobo_kit.launcher.inspect_campaign",
+        lambda *a, **k: CampaignStatus(
+            workbook=workbook,
+            next_round="R1",
+            reason="pretend R1 is due",
+            scored_rows=0,
+            total_rows=0,
+            observed_conditions=15,
+        ),
+    )
+    with pytest.raises(LauncherError, match="already exists"):
+        generate_next_round(workbook, config)
+
+
+# --------------------------------------------------------------------------- #
+# the shell
+# --------------------------------------------------------------------------- #
+
+
+def _tk_available() -> bool:
+    try:
+        import tkinter
+
+        root = tkinter.Tk()
+    except Exception:
+        return False
+    root.destroy()
+    return True
+
+
+@pytest.mark.skipif(not _tk_available(), reason="no display for tkinter")
+def test_the_window_reports_status_through_its_worker_thread(workbook, config) -> None:
+    """The UI does its work off the main thread and posts results through a queue.
+    Nothing else covers that plumbing, and a deadlock there would look like a
+    window that simply never responds."""
+    import time
+
+    from mobo_kit.launcher import LauncherWindow
+
+    window = LauncherWindow(CONFIG_PATH)
+    try:
+        window.path_var.set(str(workbook))
+        window.check()
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            window.root.update()
+            if not window._busy and window._status is not None:
+                break
+            time.sleep(0.02)
+
+        assert window._status is not None, "the window never reported a status"
+        assert window._status.next_round == "R1"
+        assert window.headline.cget("text") == "Ready to propose R1."
+        assert window.generate_button.cget("text") == "Propose R1"
+        assert str(window.generate_button.cget("state")) == "normal"
+        body = window.text.get("1.0", "end")
+        assert "15 conditions on Sheet1" in body
+    finally:
+        window.root.destroy()
+
+
+@pytest.mark.skipif(not _tk_available(), reason="no display for tkinter")
+def test_the_window_shows_a_readable_error_rather_than_a_traceback(config) -> None:
+    import time
+
+    from mobo_kit.launcher import LauncherWindow
+
+    window = LauncherWindow(CONFIG_PATH)
+    try:
+        window.path_var.set("nowhere/at/all.xlsx")
+        window.check()
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            window.root.update()
+            if not window._busy:
+                break
+            time.sleep(0.02)
+        body = window.text.get("1.0", "end")
+        assert "does not exist" in body
+        assert "Traceback" not in body
+        assert window.headline.cget("text") == "Cannot continue."
+    finally:
+        window.root.destroy()
+
+
+def test_the_logic_imports_without_tkinter(monkeypatch) -> None:
+    """A headless machine must still be able to use the functions. tkinter is
+    imported inside the window class for exactly this reason."""
+    import importlib
+    import sys
+
+    monkeypatch.setitem(sys.modules, "tkinter", None)
+    module = importlib.reload(importlib.import_module("mobo_kit.launcher"))
+    assert callable(module.generate_next_round)
