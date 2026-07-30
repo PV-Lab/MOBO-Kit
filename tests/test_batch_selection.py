@@ -44,6 +44,60 @@ def _static_callback(scores, calls=None):
     return callback
 
 
+def test_radius_pushes_the_second_pick_out_of_the_penalised_neighbourhood():
+    """What `radius` is actually for, verified by construction rather than by
+    accident.
+
+    The DTLZ2 sweep could not test this: its batches land 0.72-0.98 apart, far
+    outside every radius tried, so local penalization never had two candidates
+    close enough to penalise. On the live campaign the R1 batch's minimum spacing
+    was 0.921, so the knob is probably inert there too. Inert is fine for a safety
+    knob -- but then its function has to be shown deliberately, or nothing in the
+    suite would notice if it stopped working.
+
+    Here the top three scores are deliberately crowded into one spot, with a
+    slightly worse candidate far away. Without a radius the batch collapses onto
+    the cluster; with one, the second pick is pushed out of it.
+    """
+    # four candidates: three clustered near 0.50, one isolated at 0.90
+    positions = [0.50, 0.52, 0.54, 0.90]
+    scores = [1.00, 0.98, 0.96, 0.80]  # the cluster genuinely scores better
+
+    unpenalised = select_local_penalized_batch(
+        _pool(positions),
+        2,
+        _static_callback(scores),
+        LocalPenalizationConfig(radius=None, min_batch_distance=0.0),
+    )
+    # greedy on score alone takes the two best, which are 0.02 apart
+    assert list(unpenalised.selected_pool_indices) == [0, 1]
+
+    penalised = select_local_penalized_batch(
+        _pool(positions),
+        2,
+        _static_callback(scores),
+        LocalPenalizationConfig(radius=0.25, min_batch_distance=0.0),
+    )
+    assert list(penalised.selected_pool_indices) == [0, 3]
+    gap = abs(positions[3] - positions[0])
+    assert gap > 0.25, "the second pick should sit beyond the radius, not just apart"
+
+
+def test_a_radius_smaller_than_the_gaps_changes_nothing():
+    """The sweep's inert case, pinned: when candidates are already further apart
+    than the radius, penalization has nothing to do and must not interfere."""
+    positions = [0.10, 0.50, 0.90]
+    scores = [1.00, 0.98, 0.10]
+    for radius in (None, 0.05):
+        result = select_local_penalized_batch(
+            _pool(positions),
+            2,
+            _static_callback(scores),
+            LocalPenalizationConfig(radius=radius, min_batch_distance=0.0),
+        )
+        assert list(result.selected_pool_indices) == [0, 1]
+
+
 def test_soft_penalty_zero_and_far_distance_limits():
     factors, logs = soft_local_penalty(np.array([0.0, 10.0]), radius=0.2, epsilon=1e-9)
     assert factors[0] == pytest.approx(0.0)

@@ -34,7 +34,6 @@ from matplotlib.colors import LinearSegmentedColormap
 from mobo_kit.campaign import (
     build_objective_transform,
     fit_campaign_models,
-    normalise_inputs,
     run_r0_lhs,
     run_r1_ucb,
     run_r2_qlognehvi,
@@ -42,7 +41,15 @@ from mobo_kit.campaign import (
 from mobo_kit.design import build_design_from_config
 from mobo_kit.ucb_hvi import score_ucb_hvi_pool
 
-warnings.filterwarnings("ignore")
+# Scoped rather than blanket: this is a figure script, and the GP fits emit
+# numerical and deprecation chatter that would bury a real message. Anything the
+# fit guard has to say still comes through, which is the point -- a plot built on a
+# collapsed fit should not look like a plot built on a good one.
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning, module="botorch")
+warnings.filterwarnings("ignore", category=UserWarning, module="gpytorch")
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="numpy")
 torch.set_num_threads(1)
 
 # dataviz reference palette, categorical slots 1-3 (the documented all-pairs-safe

@@ -3,6 +3,36 @@
 Measured 2026-07-28 on the corrected `Summary Table.xlsx` (15 R0 observations,
 10 inputs). Reproduce with `python scripts/gp_diagnostic.py`.
 
+## Which instrument produced these numbers
+
+**Every LOO R² in this document was measured by `scripts/validate_structured_means.py`
+and `scripts/gp_diagnostic.py`, reading the workbook's stored `Thickness (avg)`
+column, which is `ROUND(mean(T1..T4))`.** The model no longer trains on that column
+— since 2026-07-30 it trains on the unrounded mean — so the numbers below describe a
+model input that has been superseded.
+
+**`scripts/intake_new_data.py` is the canonical instrument from now on.** It uses the
+same pipeline the campaign uses and the same values the model is given. Where it
+disagrees with a table here, it is right and the table is historical.
+
+The two were reconciled on 2026-07-30 and the difference is fully accounted for:
+
+| thickness, LOO R² | two-stage | mean module |
+|---|---:|---:|
+| rounded `X` (this document) | +0.1830 | +0.1830 |
+| unrounded mean (the intake, and the model) | +0.1160 | +0.1160 |
+
+**The pipeline makes no difference at all here** — with no mean function the two
+routes are the same code — and the entire 0.067 gap is the rounding: 7 of the 15
+rows change, by at most **0.50 nm**. Half a nanometre on seven rows moves LOO R² by
+0.067, which is the same fragility that produced the 0.089 optoelectronic gap, and
+both sit far inside the ±0.236 resolution floor.
+
+The structured numbers barely move: +0.3842 (this document's convention) against
++0.3806 (the intake), with decode and rounding choices spanning 0.006 in total. The
+swing that justifies the mean function is +0.201 on the old data and +0.265 on the
+new — it clears the floor either way, so no conclusion in this document changes.
+
 ## What was wrong
 
 `ScaleKernel(MaternKernel(nu=2.5, ard_num_dims=10))` was built with no lengthscale
@@ -319,20 +349,23 @@ thing to collect there is more thickness points per film — not only more films
 
 ## Open
 
-- **The 0.089 on optoelectronic** — +0.355 (two-stage) against +0.267 (mean
-  module), same pipeline, same 15 rows, reproduced at +0.0881. MLL optimiser
-  seeding is now ruled out (bit-identical across four seeds). The
-  standardization-scale mechanism is quantitatively consistent — fitted
-  outputscales 0.8365 and 0.4681 against 0.4859 predicted — but unconfirmed, and
-  the earlier note that it was ruled out on directional grounds does not hold.
-  Numbers, the failed experiment and the specific next test are in
-  `CAMPAIGN_STATUS.md`, open issue 1.
 - **Does linear-mean-plus-GP beat linear-mean-alone?** +0.355 against +0.244 is
   0.47 sd of the ±0.236 floor, so the observed gap is not evidence either way.
   The test rides along with the optoelectronic permutation run.
 
 ## Closed
 
+- **The 0.089 optoelectronic gap, closed 2026-07-30 as a numerical artifact.**
+  The two pipelines specify the *same model*: a zero-mean GP on `y - trend` and a
+  fixed-mean GP on `y` with mean `trend` have identical marginal likelihoods,
+  since a fixed mean only shifts the data. Measured, about a fifth of the gap is
+  the outcome transform standardizing different quantities in the two routes
+  (removing it moves the gap 0.0881 → 0.0715) and the rest is the MLL optimiser
+  landing at slightly different hyperparameters on an identical surface — median
+  lengthscale differing by up to 9.6% across folds, which at N=15 is worth 0.07 of
+  LOO R². Seeding was ruled out separately: bit-identical across four seeds.
+  **0.0881 is well inside the ±0.236 resolution floor and was never evidence of
+  anything.** Full numbers in `CAMPAIGN_STATUS.md`, issue 1.
 - The structured mean is wired into `campaign.py` (`fit_campaign_models`, and the
   `_fit_models` it delegates to), commit `600ef60`.
 - Hypervolume reference: fixed. `configs/campaign_d2d_perovskite.yaml` declares

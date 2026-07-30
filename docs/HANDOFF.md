@@ -18,7 +18,7 @@ Then verify the state yourself in one command:
 pytest -q
 ```
 
-Expect **423 passed, 0 failed** (~2 min). If that holds, everything below is true.
+Expect **425 passed, 0 failed** (~90 s). If that holds, everything below is true.
 
 Two of those tests open a real tkinter window and drive it; they skip themselves
 if there is no display.
@@ -95,6 +95,19 @@ measurement becomes a utility), and new orchestration on top.
    this function before, which is how it survived.
 
 ## Settled by measurement on 2026-07-30
+
+- **The 0.089 optoelectronic gap is closed.** Not a modelling difference: the two
+  pipelines specify the same model, so there was never a modelling question. About
+  a fifth is the outcome transform standardizing different quantities; the rest is
+  the MLL optimiser landing at slightly different hyperparameters on an identical
+  likelihood surface. The whole thing sits inside the ±0.236 floor. Details in
+  `CAMPAIGN_STATUS.md` issue 1.
+- **`scripts/intake_new_data.py` is the canonical instrument for LOO numbers.**
+  Where it disagrees with `GP_MODEL_DECISION.md`, it is right and that document is
+  historical — it read the workbook's rounded `Thickness (avg)` while the model
+  now trains on the unrounded mean. The one visible disagreement, plain thickness
+  +0.183 against +0.116, is entirely that: 7 of 15 rows differ by at most 0.50 nm,
+  and the pipeline contributes nothing. No conclusion changes.
 
 - **`beta = 4.0` and `radius = 0.25` stay.** A 3x3 sweep on DTLZ2, 8 seeds per
   cell, under a rule committed before the numbers existed: no cell beat the

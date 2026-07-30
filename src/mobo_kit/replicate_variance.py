@@ -30,8 +30,10 @@ and that is the same space as the model's target by construction.
 
 **What the GP is told is the variance of the MEAN**, not of a single film.  The
 observation handed to the model is an average of ``n`` films, so its variance is
-``pooled / n``.  Getting this wrong understates uncertainty by a factor of three on
-a triplicate, and BoTorch will not complain.
+``pooled / n``.  Passing the single-film variance instead would hand the model a
+number three times too large on a triplicate -- overstating its uncertainty, so it
+would trust a well-replicated condition less than it has earned -- and BoTorch will
+not complain.
 """
 
 from __future__ import annotations

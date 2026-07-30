@@ -209,7 +209,44 @@ Two conventions that fail *silently* if got wrong, both now covered:
 
 ## Open issues -- read before trusting a batch
 
-1. **The 0.089 discrepancy on optoelectronic — narrowed 2026-07-30, not closed.**
+1. **CLOSED 2026-07-30. The 0.089 on optoelectronic is a numerical artifact, not a
+   modelling difference.** The two pipelines specify *the same model*: fitting a
+   zero-mean GP to `y - trend` and fitting a fixed-mean GP to `y` with mean
+   `trend` have identical marginal likelihoods, because a fixed mean only shifts
+   the data. So there was never a modelling question to answer — only a question
+   about why two routes to one model disagreed.
+
+   Two contributions, measured:
+
+   | | two-stage | mean module | gap |
+   |---|---:|---:|---:|
+   | with `Standardize` (production) | +0.3551 | +0.2670 | **+0.0881** |
+   | without `Standardize` | +0.3385 | +0.2670 | +0.0715 |
+
+   *Standardization scale accounts for about 19%.* With the transform in place the
+   two pipelines standardize different quantities — the residual in one, the target
+   in the other — so the outputscale and noise priors, which are defined on
+   standardized units, act on differently-scaled residuals. Removing it moves the
+   gap from 0.0881 to 0.0715.
+
+   *The remaining 81% is the MLL optimiser.* With the transform gone the likelihood
+   surfaces are identical, yet the fits land in slightly different places: across
+   folds the outputscale differs by up to 2.7%, the noise by 2.7%, and the median
+   lengthscale by **9.6%**. At N=15 that is enough to move LOO R² by 0.07. The
+   optimiser is deterministic — the earlier seed sweep found bit-identical results
+   across four seeds — so this is a different starting point on one surface, not
+   stochastic variation.
+
+   **The conclusion that matters:** 0.0881 is well inside the ±0.236 resolution
+   floor, so it was never evidence of anything, and it is now explained as roughly
+   one-fifth definitional and four-fifths optimiser wobble. The campaign uses the
+   mean-module convention, which is the one wired into `campaign.py`. No action.
+   Kept below for the reasoning and because "two implementations disagree" is the
+   sort of thing that gets rediscovered.
+
+   ---
+
+   *Original entry, narrowed 2026-07-30 before the closure above.*
    Two implementations of the same pipeline on the same 15 rows give LOO R2 +0.355
    (two-stage) and +0.267 (mean module). Reproduced exactly: **+0.0881**.
 
@@ -400,8 +437,10 @@ Two conventions that fail *silently* if got wrong, both now covered:
    Four things worth knowing before touching it:
 
    * **The variance handed over is of the MEAN**, `pooled / n_films`, because the
-     observation is an average of n films. Passing the single-film variance
-     understates it threefold on a triplicate and nothing errors.
+     observation is an average of n films. Passing the single-film variance would
+     be three times too large on a triplicate — *overstating* uncertainty, so the
+     model would trust the most carefully replicated conditions least — and nothing
+     errors.
    * **Between-film and within-film are different quantities.** Between-film is
      what `train_Yvar` needs. The within-film 0.0593 on `log T` (24 dof) contains
      no run-to-run variation at all, so it is a **floor**: if the pooled
@@ -460,7 +499,16 @@ batch spacings are 0.72–0.98, far above every radius tested, so local penaliza
 rarely has two candidates close enough to penalise — visible in `beta=8` giving
 identical results at radius 0.15 and 0.25. This sweep therefore validates `beta`
 properly and says little about `radius`; a problem with a tighter optimum would be
-needed for that.
+needed for that. The live campaign looks the same way: the R1 batch's minimum
+spacing was 0.921, so the knob is probably inert there too.
+
+Inert is acceptable for a safety knob, but then it has to be shown to work
+deliberately rather than inferred from a campaign that never exercised it.
+`test_radius_pushes_the_second_pick_out_of_the_penalised_neighbourhood` does that
+by construction: three candidates crowded 0.02 apart scoring better than an
+isolated fourth, where greedy selection takes the two best and penalization pushes
+the second pick beyond the radius. Its companion pins the inert case — a radius
+smaller than the gaps must change nothing.
 
 ## When new data arrives
 
@@ -493,6 +541,16 @@ On the current 15 rows it reports: uniformity does not beat the null (−0.681),
 optoelectronic keeps its mean function (−0.342 → +0.267, swing +0.609), thickness
 keeps its mean function (+0.116 → +0.381, swing +0.265). The guard is clean for
 both.
+
+**This is the canonical instrument for LOO numbers from now on.** It reports plain
+thickness at +0.116 where `GP_MODEL_DECISION.md` records +0.183; that was
+reconciled on 2026-07-30 and the whole difference is the data, not the method. The
+older instrument read the workbook's stored `ROUND(mean(T1..T4))`; the model now
+trains on the unrounded mean. Seven of fifteen rows change, by at most 0.50 nm, and
+that alone moves LOO R² by 0.067 — the pipeline contributes exactly nothing, since
+with no mean function the two routes are the same code. Same fragility as the 0.089
+above, and comfortably inside the ±0.236 floor. Neither conclusion changes: the
+structured swing is +0.201 on the old values and +0.265 on the new.
 
 ## Reproducing the analysis
 

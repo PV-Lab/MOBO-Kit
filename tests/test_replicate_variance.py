@@ -138,8 +138,10 @@ def test_the_live_config_declares_the_floor_and_the_r0_policy() -> None:
 
 
 def test_the_variance_handed_to_the_model_is_of_the_mean() -> None:
-    """The observation is an average of n films. Passing the single-film variance
-    understates it by a factor of three on a triplicate, and nothing errors."""
+    """The observation is an average of n films, so its variance is pooled / n.
+    Passing the single-film variance would be three times too large on a triplicate
+    -- overstating the uncertainty of exactly the conditions that were replicated
+    most carefully -- and nothing errors."""
     pooled = {name: PooledVariance(name, 0.09, 10, 5, "value") for name in NAMES}
     films = _films({name: [3, 3, 1] for name in NAMES})
     yvar = train_yvar_for_rows(pooled, films, NAMES)
