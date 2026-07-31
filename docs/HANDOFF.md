@@ -93,9 +93,12 @@ a person rather than code. In rough priority:
    linear-mean-alone under the permutation null? It was always meant to ride along
    with the optoelectronic permutation run and gates nothing.
 
-Plotting is the obvious next build: `CAMPAIGN_STATUS.md` has a "For the plotting
-work" section with the contour-slice recipe and the two conventions that silently
-produce wrong pictures.
+Plotting landed on 2026-07-31: `scripts/plot_round_simulation.py` runs the whole
+loop against a frozen GP oracle and renders it, and `CAMPAIGN_STATUS.md` still has
+the "For the plotting work" section with the contour-slice recipe and the two
+conventions that silently produce wrong pictures. Read `docs/ROUND_SIM_DELTA.md`
+before extending it — the approach came from Annie Xu's fork and the delta list
+records what was changed and why.
 
 ## Three floors. Check all three before comparing any two numbers.
 
@@ -127,9 +130,15 @@ the pleasing direction. Derivations and evidence are in `GP_MODEL_DECISION.md`.
 - **The 0.089 optoelectronic gap is explained**, not merely bounded: the two
   pipelines specify the same model, about a fifth of the gap is the outcome
   transform standardizing different quantities, and the rest is the optimiser.
-- **`beta = 4.0` and `radius = 0.25` stay**, under a rule fixed before the sweep
-  ran. `radius` was *not* exercised by that sweep — DTLZ2 batches land 0.72–0.98
-  apart — so it is verified separately by construction in
+- **`beta = 4.0` stays**, under a rule fixed before the DTLZ2 sweep ran.
+  **`radius = 0.25` also stays, but its justification changed on 2026-07-31 and it
+  is now a declared policy choice rather than a settled one.** DTLZ2 never
+  exercised the knob (batches land 0.72–0.98 apart), and the claim that the live
+  campaign was the same rested on a spacing figure the R1 baseline defect had
+  inflated. On the corrected landscape `radius` binds below about 0.30, staircases
+  achieved spacing 0.455 → 0.921, and trades diversity against range-edge pinning
+  (11 → 15 edge coordinates). See `CAMPAIGN_STATUS.md`, "Are beta = 4.0 and
+  radius = 0.25 defensible?". The mechanism is still verified by construction in
   `tests/test_batch_selection.py`.
 - **The thickness mean function's evidentiary weight is the rank permutation**
   (p = 0.0350, 95% CI [0.0270, 0.0446] at 1800 shuffles). The R² swing is

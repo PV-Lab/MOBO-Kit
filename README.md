@@ -1,6 +1,7 @@
 # MOBO-Kit
 
-by Ethan Schwartz, Daniel Abdoue, Nicky Evans, and Tonio Buonassisi
+initially designed by Ethan Schwartz, Daniel Abdoue, Nicky Evans, and Tonio Buonassisi<br>
+updated and reconstructed by Ziyang (Colin) Qi and Annie Xu
 
 <h1>
 <p align="center">

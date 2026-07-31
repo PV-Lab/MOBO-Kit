@@ -50,10 +50,16 @@ def test_radius_pushes_the_second_pick_out_of_the_penalised_neighbourhood():
 
     The DTLZ2 sweep could not test this: its batches land 0.72-0.98 apart, far
     outside every radius tried, so local penalization never had two candidates
-    close enough to penalise. On the live campaign the R1 batch's minimum spacing
-    was 0.921, so the knob is probably inert there too. Inert is fine for a safety
-    knob -- but then its function has to be shown deliberately, or nothing in the
-    suite would notice if it stopped working.
+    close enough to penalise.
+
+    It was once recorded here that the knob was "probably inert" on the live
+    campaign too, on the strength of the R1 batch's 0.921 minimum spacing. That
+    figure was itself produced by the mis-encoded UCB-HVI baseline fixed in
+    4b76670; corrected, the live batch spaces at 0.6337 and `radius` demonstrably
+    binds below about 0.30 (CAMPAIGN_STATUS.md, "Are beta = 4.0 and radius = 0.25
+    defensible?"). This test predates that and is unaffected by it -- it verifies
+    the mechanism by construction, which is exactly why it kept its value when the
+    campaign evidence turned out to be wrong.
 
     Here the top three scores are deliberately crowded into one spot, with a
     slightly worse candidate far away. Without a radius the batch collapses onto

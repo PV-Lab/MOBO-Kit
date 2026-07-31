@@ -1,4 +1,4 @@
-﻿"""Simulate the campaign loop against a frozen GP oracle, and plot what it did.
+"""Simulate the campaign loop against a frozen GP oracle, and plot what it did.
 
 Derived from Annie Xu's ``examples/round_simulations.py`` on her
 ``ax_plots_simulation`` branch, which established the approach, the output

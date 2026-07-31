@@ -78,6 +78,13 @@ what Phase 4 needs to turn a spread into an observation variance.
 
 ## For the plotting work
 
+**This is now implemented.** `scripts/plot_round_simulation.py` runs the whole
+loop against a frozen GP oracle and renders contour slices, per-round boxplots and
+a hypervolume line, with a batch-identity manifest
+(`docs/ROUND_SIM_MANIFEST.md`). Read `docs/ROUND_SIM_DELTA.md` before extending
+it. The recipe below is kept because it is what any new plotting code has to get
+right, and both conventions still fail silently.
+
 **Contour slice through the GP.** Fit with the same path a round uses, then
 evaluate on a 2-D grid with the other eight inputs held fixed:
 
@@ -111,7 +118,9 @@ Two things to respect when turning that into a utility surface:
   asked about different points than it was told about, and nothing errors.
 
 **Round-comparison plot.** Keep each `RoundResult` and plot `conditions` per
-round on shared axes (R0 grey / R1 blue / R2 orange), plus per-round
+round on shared axes (R0 blue `#2a78d6` / R1 orange `#eb6834` / R2 green
+`#1baf7a` — the palette `plot_dtlz2_report.py` and `plot_round_simulation.py`
+both use, so project figures read as one set), plus per-round
 `min_pairwise_distance` and boundary counts from `diagnostics`. Contour slices
 should show **23 distinct conditions**, not 39 films -- replicates share inputs
 and would otherwise overplot.
