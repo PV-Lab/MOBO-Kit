@@ -372,21 +372,30 @@ rediscovered and re-argued. Status is stated at the top of each.
    a range edge rather than only how many. Findings from Sheet1 travel with it, so
    the sheet can be forwarded on its own.
 
-   **What the first artifact said about the R0-trained batch**, on the two flags
-   raised earlier:
+   **The batch this described was withdrawn and reissued on 2026-07-31** — see
+   `docs/R1_BATCH_WITHDRAWAL.md`. Four of its five conditions survived unchanged,
+   including `R1_C01`, which is the condition the numbers below are quoted from, so
+   **these figures are unchanged and were re-read from the reissued artifact rather
+   than assumed.**
+
+   **What the artifact says about the R0-trained batch**, on the two flags raised
+   earlier:
 
    * `speed_1 = 1000` — the declared probe moves each candidate to the corner and
-     compares. Thickness utility falls from 0.786 to 0.223 while the sd ratio is
-     **1.02**: the region is not being skipped as unexplored, it is being skipped
-     as known and bad. `speed_1` is a feature of the thickness mean function, so
-     that confidence is a fitted global trend extrapolating to its range edge, not
-     a local average of samples 1 and 12 — and the two points anchoring that edge
-     disagree, one of them (sample 12) holding `ROUND(mean(1600, 709))`. So the
-     corner is a measurement question, as suspected, but by a different route than
-     "the contradiction was averaged into confidence".
+     compares. For `R1_C01`, thickness utility falls from 0.786 to 0.223 while the
+     sd ratio is **1.02**. Across all five conditions the mean falls 0.791 → 0.299
+     with a mean sd ratio of **1.10**. Either way the region is not being skipped
+     as unexplored, it is being skipped as known and bad. `speed_1` is a feature of
+     the thickness mean function, so that confidence is a fitted global trend
+     extrapolating to its range edge, not a local average of samples 1 and 12 — and
+     the two points anchoring that edge disagree, one of them (sample 12) holding
+     `ROUND(mean(1600, 709))`. So the corner is a measurement question, as
+     suspected, but by a different route than "the contradiction was averaged into
+     confidence". The reissued batch's minimum `speed_1` is still 1500.
    * `anneal_temp` at 100–105 in all five conditions is a declared standing note:
      a monotone linear mean puts the optimum at a range edge by construction. The
      open question is chemical, and if a floor exists it belongs in `constraints:`.
+     Unchanged in the reissued batch.
 
    Probes and notes are declared in `configs/…yaml` under `review:`, not hardcoded.
 
@@ -489,9 +498,62 @@ rediscovered and re-argued. Status is stated at the top of each.
    1/2A/2B/2C modules were removed in `33f101f`, and
    `test_validity_report_carries_no_approval_flags` holds the approval tiers out.
 
-**Nothing on this list is now blocked on code.** What remains is a human reading a
-proposed batch (issue 4), the R1 triplicates arriving (issue 7), and a decision
-about whether an `anneal_temp` floor belongs in `constraints:`.
+9. **Fixed 2026-07-31 — `run_r1_ucb` scored every candidate against a baseline
+   whose thickness axis had collapsed to zero.** This is the most consequential
+   defect found in this project, and the R1 batch it produced was withdrawn:
+   `docs/R1_BATCH_WITHDRAWAL.md`.
+
+   `ObjectiveTransform.transform` is a MODEL-OUTPUT decoder — it applies `exp()`
+   to a log-link objective before computing utility. `run_r1_ucb` handed it
+   `observed_Y_raw`, thickness in **nanometres**, so the value was exponentiated a
+   second time. `exp(360…1303)` saturates the 650 nm Gaussian to exactly `0.0`.
+
+   | | as called | correctly encoded |
+   |---|---:|---:|
+   | observed baseline hypervolume | **0.004659** | **0.436442** |
+   | baseline Pareto set | 2 points | 5 points |
+
+   A factor of 94, and every candidate's improvement was measured against a front
+   with no thickness axis at all. On the live batch this moved one of five
+   conditions and the minimum spacing from 0.9209 to 0.6337 — so it also inflated
+   the spacing figure that this document used to argue `radius` was inert.
+
+   **The fix** is `ObjectiveTransform.encode_measurements`, with
+   `transform_measurements` as the one-call safe route, and `run_r1_ucb` encoding
+   before it proposes (commit `4b76670`). `ucb_hvi.py` is untouched — it is one of
+   the frozen acquisition modules and the defect was in `campaign.py`
+   orchestration. **Annie Xu found and fixed this independently on
+   `ax_plots_simulation` before we knew it existed**; the fix promotes her
+   `_physical_to_model_output` to the public contract.
+
+   **Every `ObjectiveTransform.transform` call site was audited.** `objectives.py`
+   403/481/516 and `ucb_hvi.py:342` all operate on posterior samples, already in
+   model space; `batch_review.py` never routes measurements through the transform
+   at all. Exactly one call site was defective, `ucb_hvi.py:698`, reached only
+   from `run_r1_ucb`. R2 was never affected — qLogNEHVI takes `train_X_norm` and
+   derives its baseline through the model.
+
+   **This is the third plausible-finite-number failure in this project**, after
+   the hypervolume auto-reference (issue 5) and the silently swallowed
+   `train_Yvar` (issue 7). All three share one shape: **a wrong answer that is
+   finite, ordinary-looking, and compared against nothing.** No guard fires
+   because nothing is out of range; the number is simply not the number anyone
+   meant. The lesson is not "add more guards" — each of these passed every guard
+   it met — it is that **a quantity no test reproduces independently is a
+   quantity nobody is checking.** `run_r1_ucb` now reports
+   `observed_baseline_hypervolume` and `observed_baseline_pareto_size` so the
+   value is observable from outside, and the tests recompute both by a separate
+   route.
+
+   **Why 446 tests missed it.** Every objective in the synthetic acceptance test
+   was affine, and for an affine objective measurement space and model space are
+   the same numbers — a link-encoding mistake is invisible *by construction*.
+   `test_dtlz2_acceptance.py` now also runs with a log-link objective, so every
+   end-to-end pass exercises both link types the campaign uses.
+
+**Nothing on this list is now blocked on code.** What remains is a human reading
+the reissued batch (issue 4), the R1 triplicates arriving (issue 7), and a
+decision about whether an `anneal_temp` floor belongs in `constraints:`.
 
 ## Are beta = 4.0 and radius = 0.25 defensible?
 
@@ -521,13 +583,35 @@ than noise, and the edge-coordinate count is flat at 16–17 of 80 across every 
 which says neither knob is what drives batches onto range edges (on the live
 campaign that was the monotone `anneal_temp` mean function).
 
-**One limit worth stating**: `radius` is not binding on this problem. Achieved
-batch spacings are 0.72–0.98, far above every radius tested, so local penalization
+**One limit worth stating**: `radius` is not binding **on DTLZ2**. Achieved batch
+spacings there are 0.72–0.98, far above every radius tested, so local penalization
 rarely has two candidates close enough to penalise — visible in `beta=8` giving
 identical results at radius 0.15 and 0.25. This sweep therefore validates `beta`
-properly and says little about `radius`; a problem with a tighter optimum would be
-needed for that. The live campaign looks the same way: the R1 batch's minimum
-spacing was 0.921, so the knob is probably inert there too.
+properly and says little about `radius` on that problem.
+
+**It does bind on the live campaign, and the earlier claim here that it probably
+did not was itself an artifact.** That claim rested on the R1 batch's minimum
+spacing of 0.921 — a number produced by the mis-encoded UCB-HVI baseline described
+in `docs/R1_BATCH_WITHDRAWAL.md`. With the baseline corrected the live R1 batch
+spaces at 0.6337, and the round simulation measures a clean monotone staircase
+(`scripts/plot_round_simulation.py`, 13 cells, seed 73, oracle-scored R0):
+
+| radius | 0.05 | 0.10 | 0.15 | 0.20 | 0.25 | 0.30 | 0.35 | 0.40 | 0.45 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| achieved R1 spacing | 0.455 | 0.455 | 0.455 | 0.543 | 0.720 | 0.921 | 0.921 | 0.921 | 0.921 |
+| range-edge coords | 11 | 11 | 11 | 12 | 13 | 13 | 15 | 15 | 15 |
+
+Nine cells produce **six distinct R1 batches**. `radius` binds below about 0.30
+and saturates above it, and it buys spacing at a measurable cost: **11 → 15
+range-edge coordinates across the arm.** That trade-off — diversity against
+edge-pinning — had not been measured before, and it is a policy choice for the
+group rather than a tuning question.
+
+**`radius = 0.25` stays the default for now**, mid-staircase, but as a declared
+choice rather than an inherited one. Note the numbers above are single-seed:
+*which* batch a cell proposes is a fact, because the pipeline is deterministic at
+a fixed seed, but the hypervolumes cannot rank cells at n = 1. Re-run the radius
+arm at ~5 seeds before changing the default on performance grounds.
 
 Inert is acceptable for a safety knob, but then it has to be shown to work
 deliberately rather than inferred from a campaign that never exercised it.

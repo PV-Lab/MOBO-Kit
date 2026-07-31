@@ -24,12 +24,22 @@ Measured on the real workbook, R0:
 | link decoded once (your `_physical_to_model_output`) | 0.436442 | 5 |
 
 Every candidate's HVI is scored against a baseline whose thickness axis is pinned
-at zero. Your `_run_r1_corrected` is the fix, and it is preserved verbatim in
-spirit in the new script's `run_r1_ucb_corrected`. `campaign.py` is deliberately
-**not** patched here — that is a decision for the group, not a side effect of a
-plotting task — so the new script re-implements R1 through the public
-`propose_ucb_hvi_batch` exactly as you did, and the manifest records both
-baseline numbers on every row.
+at zero. Your `_run_r1_corrected` is the fix.
+
+**Update, later the same day: `colin` no longer has it.** The group decided the
+fix was its own change, and commit `4b76670` promotes the concept in your
+`_physical_to_model_output` to a public contract —
+`ObjectiveTransform.encode_measurements`, with `transform_measurements` as the
+one-call safe route — and has `run_r1_ucb` encode before it proposes. The
+acquisition modules are untouched: `ucb_hvi.py` stays byte-identical, because the
+defect was in `campaign.py` orchestration.
+
+The R1 batch built on the mis-encoded baseline was **withdrawn and reissued**
+(`R1_BATCH_WITHDRAWAL.md`): four of five conditions survived, one was replaced,
+and the batch's minimum spacing fell 0.9209 → 0.6337. No films had been made.
+`scripts/plot_round_simulation.py` now simply calls the public `run_r1_ucb` —
+verified to reproduce its own private version hash-for-hash — and keeps the
+contrast in the manifest as a standing tripwire.
 
 R2 is unaffected: `run_r2_qlognehvi` passes `train_X_norm`, and qLogNEHVI derives
 its baseline through the model in model space.

@@ -1,4 +1,4 @@
-"""Simulate the campaign loop against a frozen GP oracle, and plot what it did.
+﻿"""Simulate the campaign loop against a frozen GP oracle, and plot what it did.
 
 Derived from Annie Xu's ``examples/round_simulations.py`` on her
 ``ax_plots_simulation`` branch, which established the approach, the output
@@ -32,18 +32,20 @@ qLogNEHVI only.  It is the numerically stable formulation of qNEHVI and the one
 ``campaign.py`` ships; Annie's branch carried a ``run_r2_qnehvi`` alternative,
 which is deliberately not used here.
 
-ONE DEVIATION FROM THE PUBLIC API, and the reason for it.  R1 is run through
-``propose_ucb_hvi_batch`` directly rather than through ``campaign.run_r1_ucb``,
-because ``run_r1_ucb`` hands its observed baseline to the objective transform in
-the WRONG SPACE: it passes ``observed_Y_raw`` (thickness in nanometres) to a
-transform that applies ``exp()`` to log-link objectives.  ``exp(1303)`` overflows
-the 650 nm Gaussian to exactly 0.0 -- finite, so no guard fires -- and every
-observation's thickness utility becomes zero.  Measured on the real workbook, the
-baseline hypervolume is **0.004659 as called against 0.436442 correctly encoded**,
-and the baseline Pareto set collapses from 5 points to 2.  Annie's branch already
-carried this fix (``_physical_to_model_output``); it is preserved here.  Both
-numbers go in the manifest so the effect is recorded rather than argued.
-``campaign.py`` is not modified -- that is a separate decision for the group.
+THE R1 BASELINE, and why the manifest carries three numbers for it.  When this
+script was written, ``campaign.run_r1_ucb`` handed its observed HVI baseline to
+the objective transform in the WRONG SPACE -- measurement-space nanometres to a
+transform that applies ``exp()`` to log-link objectives.  That pinned every
+observation's thickness utility to exactly 0.0 and made the baseline hypervolume
+**0.004659 against a true 0.436442**.  The script carried its own corrected R1
+until the defect was fixed in ``campaign.py`` (commit ``4b76670``, promoting the
+fix Annie's branch already carried as ``_physical_to_model_output``).
+
+It now calls the public ``run_r1_ucb``, verified to reproduce the private
+version's batches hash-for-hash, and keeps the contrast in the manifest as a
+standing tripwire: the baseline the acquisition REPORTS must equal the one
+recomputed here by an independent route, and both must stay far away from the
+unencoded value.  The assertion runs on every cell of every sweep.
 
 Usage::
 
@@ -58,6 +60,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import time
 import warnings
 from copy import deepcopy
@@ -76,24 +79,18 @@ import pandas as pd  # noqa: E402
 import torch  # noqa: E402
 from matplotlib.colors import LinearSegmentedColormap  # noqa: E402
 
-from mobo_kit.batch_selection import LocalPenalizationConfig  # noqa: E402
 from mobo_kit.campaign import (  # noqa: E402
-    RoundResult,
     build_objective_transform,
-    expand_replicates,
     fit_campaign_models,
     load_campaign_config,
     normalise_inputs,
     objective_names,
+    run_r1_ucb,
     run_r2_qlognehvi,
-    validate_batch,
 )
-from mobo_kit.candidate_pool import sample_discrete_candidate_pool  # noqa: E402
-from mobo_kit.constraints import constraints_from_config  # noqa: E402
 from mobo_kit.design import Design, build_design_from_config  # noqa: E402
 from mobo_kit.metrics import compute_ref_pareto_hv  # noqa: E402
 from mobo_kit.objectives import ObjectiveTransform  # noqa: E402
-from mobo_kit.ucb_hvi import propose_ucb_hvi_batch  # noqa: E402
 from mobo_kit.workbook_io import read_campaign_workbook  # noqa: E402
 
 # Scoped rather than blanket, exactly as scripts/plot_dtlz2_report.py does it: the
@@ -181,52 +178,23 @@ def cell_slug(radius: float, beta: float) -> str:
     return f"radius_{_slug_number(radius)}__beta_{_slug_number(beta)}"
 
 
-def _on_grid_mask(design: Design, X_phys: np.ndarray) -> np.ndarray:
-    """Which rows sit exactly on the declared grid.
-
-    Reimplemented here rather than imported because ``campaign._on_grid_mask`` is
-    private.  The R0 control is a declared off-grid exception (anti_time = 12
-    against a 9/11/13... grid): it stays in the GP but is excluded from candidate
-    pool bookkeeping, which is what this mask is for.
-    """
-    mask = np.ones(len(X_phys), dtype=bool)
-    for column, grid in enumerate(design.var_array):
-        allowed = np.asarray(grid, dtype=float)
-        for row, value in enumerate(np.asarray(X_phys, float)[:, column]):
-            if not np.any(np.isclose(value, allowed, rtol=0.0, atol=1e-9)):
-                mask[row] = False
-    return mask
-
-
 def to_model_space(Y_physical: np.ndarray, transform: ObjectiveTransform) -> np.ndarray:
-    """Measurement space -> model space, undoing nothing else.
+    """Measurement space -> model space, as a numpy convenience.
 
-    ``ObjectiveTransform.transform`` decodes the link itself (``exp`` for a log
-    link), so anything handed to it must already be in the model's space.  For
-    thickness that is ``log(nm)``.  Passing nanometres is the mis-encoding
-    described in the module docstring, and it fails silently.
+    Delegates to ``ObjectiveTransform.encode_measurements``, which is the public
+    contract for this step since commit ``4b76670``.  It exists as a separate
+    function here only because the rest of this script works in numpy.
     """
-    values = np.asarray(Y_physical, dtype=float).copy()
-    if values.ndim != 2 or values.shape[1] != transform.objective_count:
-        raise ValueError(
-            f"Expected an (N, {transform.objective_count}) matrix; got {values.shape}."
-        )
-    for index, spec in enumerate(transform.specs):
-        if spec.model_link == "log":
-            if np.any(values[:, index] <= 0):
-                raise ValueError(
-                    f"Objective {spec.name!r} has a log link and requires strictly "
-                    "positive physical values."
-                )
-            values[:, index] = np.log(values[:, index])
-    return values
+    values = torch.tensor(np.asarray(Y_physical, dtype=float), dtype=torch.double)
+    with torch.no_grad():
+        return transform.encode_measurements(values).detach().cpu().numpy()
 
 
 def utilities(Y_physical: np.ndarray, transform: ObjectiveTransform) -> np.ndarray:
     """Campaign utility from measurement-space values.  Higher is better, always."""
+    values = torch.tensor(np.asarray(Y_physical, dtype=float), dtype=torch.double)
     with torch.no_grad():
-        tensor = torch.tensor(to_model_space(Y_physical, transform), dtype=torch.double)
-        return transform.transform(tensor).detach().cpu().numpy()
+        return transform.transform_measurements(values).detach().cpu().numpy()
 
 
 def hypervolume(Y_physical: np.ndarray, transform: ObjectiveTransform,
@@ -301,107 +269,6 @@ def oracle_predict(
 
 
 # --------------------------------------------------------------------------- #
-# R1, with the baseline encoded in the space the transform expects
-# --------------------------------------------------------------------------- #
-
-
-def _penalization(config: Mapping[str, Any]) -> LocalPenalizationConfig:
-    raw = config.get("local_penalization") or {}
-    weights = raw.get("dimension_weights")
-    return LocalPenalizationConfig(
-        radius=raw.get("radius"),
-        min_batch_distance=float(raw.get("min_batch_distance", 0.0)),
-        min_observed_distance=float(raw.get("min_observed_distance", 0.0)),
-        dimension_weights=None if weights is None else np.asarray(weights, dtype=float),
-    )
-
-
-def run_r1_ucb_corrected(
-    config: Mapping[str, Any],
-    observed_X_phys: np.ndarray,
-    observed_Y_physical: np.ndarray,
-    *,
-    n: int | None = None,
-    seed: int,
-) -> tuple[RoundResult, tuple[str, ...]]:
-    """``campaign.run_r1_ucb`` with the observed HVI baseline correctly encoded.
-
-    Identical to the shipped function in every other respect -- same design, same
-    pool, same penalisation, same seeding -- so the only difference in a proposed
-    batch is attributable to the baseline.  See the module docstring for the
-    measured size of that difference.
-    """
-    design = build_design_from_config(dict(config))
-    settings = dict((config.get("rounds") or {}).get("r1") or {})
-    if not settings:
-        raise ValueError("config['rounds']['r1'] is required.")
-    q = int(settings["batch_size"]) if n is None else int(n)
-
-    transform = build_objective_transform(config)
-    reference = np.asarray(config["reference_point_utility"], dtype=float)
-    penalization = _penalization(config)
-
-    model, fit_warnings = fit_campaign_models(
-        config, observed_X_phys, observed_Y_physical, seed=seed
-    )
-
-    on_grid = _on_grid_mask(design, observed_X_phys)
-    pool = sample_discrete_candidate_pool(
-        design,
-        int(settings.get("candidate_pool_size", 32768)),
-        seed=seed,
-        observed_phys=np.asarray(observed_X_phys, dtype=float)[on_grid],
-        row_constraints=constraints_from_config(dict(config), design) or None,
-    )
-
-    # THE FIX. campaign.run_r1_ucb passes observed_Y_physical here.
-    observed_model_space = to_model_space(observed_Y_physical, transform)
-
-    proposal = propose_ucb_hvi_batch(
-        pool,
-        model,
-        observed_model_space,
-        transform,
-        reference,
-        q=q,
-        beta=float(settings.get("beta", 4.0)),
-        local_penalization_config=penalization,
-        mc_samples=int(settings.get("posterior_samples", 256)),
-        seed=seed,
-        moment_method=str(settings.get("moment_method", "monte_carlo")),
-    )
-
-    conditions = pd.DataFrame(
-        np.asarray(proposal.selection.X_phys, dtype=float), columns=list(design.names)
-    )
-    report = validate_batch(
-        conditions,
-        design,
-        expected_count=q,
-        min_pairwise_distance=penalization.min_batch_distance,
-    )
-    replicates_per = int(settings.get("replicates_per_condition", 1))
-    result = RoundResult(
-        round_name="R1",
-        conditions=conditions,
-        replicates=expand_replicates(
-            conditions, replicates=replicates_per, round_name="R1"
-        ),
-        diagnostics={
-            "method": "ucb_hvi",
-            "seed": seed,
-            "beta": float(settings.get("beta", 4.0)),
-            "pool_size": pool.size,
-            "objective_contract": transform.version,
-            "r1_baseline_encoding": "model_space (corrected)",
-            "model_fit_warnings": list(fit_warnings),
-            "validity": report,
-        },
-    )
-    return result, tuple(fit_warnings)
-
-
-# --------------------------------------------------------------------------- #
 # one parameter cell
 # --------------------------------------------------------------------------- #
 
@@ -435,7 +302,27 @@ def run_cell(
     # measured R0 with a simulated R1/R2 and make the round comparison incoherent.
     Y_r0 = oracle_predict(oracle, config, X_r0, transform)
 
-    r1, r1_warnings = run_r1_ucb_corrected(config, X_r0, Y_r0, seed=seed)
+    r1 = run_r1_ucb(config, X_r0, Y_r0, seed=seed)
+    r1_warnings = tuple(r1.diagnostics.get("model_fit_warnings", ()))
+
+    # STANDING TRIPWIRE for the defect this script was written alongside.
+    # run_r1_ucb reports the HVI baseline it actually used; `hypervolume` recomputes
+    # it here through metrics.compute_ref_pareto_hv, a different Pareto filter and a
+    # different call path. They agree only if the observed values were encoded into
+    # model space before being transformed. If that encoding is ever dropped again,
+    # this fires on the first cell of the next sweep instead of quietly producing a
+    # plausible manifest.
+    reported_baseline = float(r1.diagnostics["observed_baseline_hypervolume"])
+    independent_baseline = hypervolume(Y_r0, transform, reference)
+    if not math.isclose(reported_baseline, independent_baseline, rel_tol=1e-9):
+        raise RuntimeError(
+            "The R1 acquisition's observed baseline does not match an independent "
+            f"computation: reported {reported_baseline!r} against "
+            f"{independent_baseline!r}. The most likely cause is measurement-space "
+            "values reaching ObjectiveTransform.transform without going through "
+            "encode_measurements first -- see docs/ROUND_SIM_DELTA.md."
+        )
+
     X_r1 = r1.conditions.to_numpy(dtype=float)
     Y_r1 = oracle_predict(oracle, config, X_r1, transform)
 
@@ -470,6 +357,11 @@ def run_cell(
         "final_fit_warnings": tuple(final_warnings),
         "r1_fit_warnings": r1_warnings,
         "r2_fit_warnings": tuple(r2.diagnostics.get("model_fit_warnings", ())),
+        "baseline": {
+            "reported": reported_baseline,
+            "independent": independent_baseline,
+            "pareto_size": int(r1.diagnostics["observed_baseline_pareto_size"]),
+        },
         "hv": {
             "R0": hypervolume(Y_r0, transform, reference),
             "R0+R1": hypervolume(Y_01, transform, reference),
@@ -778,8 +670,10 @@ MANIFEST_COLUMNS: tuple[str, ...] = (
     "hv_r0_r1_r2",
     "hv_gain_r1",
     "hv_gain_r2",
-    "baseline_hv_model_space",
-    "baseline_hv_as_run_r1_ucb_calls_it",
+    "baseline_hv_reported_by_r1",
+    "baseline_hv_independent",
+    "baseline_hv_pareto_size",
+    "baseline_hv_unencoded_contrast",
     "r1_fit_warnings",
     "r2_fit_warnings",
     "final_fit_warnings",
@@ -795,8 +689,7 @@ def manifest_row(
     condition_id: int,
     arm: str,
     seed: int,
-    baseline_model_space: float,
-    baseline_as_called: float,
+    baseline_unencoded: float,
 ) -> dict[str, Any]:
     r1_validity = cell["r1"].diagnostics["validity"]
     r2_validity = cell["r2"].diagnostics["validity"]
@@ -824,8 +717,10 @@ def manifest_row(
         "hv_r0_r1_r2": cell["hv"]["R0+R1+R2"],
         "hv_gain_r1": cell["hv"]["R0+R1"] - cell["hv"]["R0"],
         "hv_gain_r2": cell["hv"]["R0+R1+R2"] - cell["hv"]["R0+R1"],
-        "baseline_hv_model_space": baseline_model_space,
-        "baseline_hv_as_run_r1_ucb_calls_it": baseline_as_called,
+        "baseline_hv_reported_by_r1": cell["baseline"]["reported"],
+        "baseline_hv_independent": cell["baseline"]["independent"],
+        "baseline_hv_pareto_size": cell["baseline"]["pareto_size"],
+        "baseline_hv_unencoded_contrast": baseline_unencoded,
         "r1_fit_warnings": len(cell["r1_fit_warnings"]),
         "r2_fit_warnings": len(cell["r2_fit_warnings"]),
         "final_fit_warnings": len(cell["final_fit_warnings"]),
@@ -1024,22 +919,33 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     print("   fit guard clean")
 
-    # The two baseline encodings, recorded once because they are a property of the
-    # observed set rather than of any cell.
-    baseline_model_space = hypervolume(Y_r0_measured, transform, reference)
-    with torch.no_grad():
-        as_called = transform.transform(
-            torch.tensor(Y_r0_measured, dtype=torch.double)
-        ).detach().cpu().numpy()
-    pareto_dominates = bool((as_called > reference).all(axis=1).any())
-    baseline_as_called = (
-        float(compute_ref_pareto_hv(
-            torch.tensor(as_called, dtype=torch.double), reference
-        )[2])
-        if pareto_dominates else 0.0
-    )
-    print(f"   R1 baseline HV, model space (used here) : {baseline_model_space:.6f}")
-    print(f"   R1 baseline HV, as run_r1_ucb encodes it: {baseline_as_called:.6f}")
+    # The unencoded contrast: what the R1 baseline WOULD be if measurement-space
+    # values reached the transform directly. It is a property of the observed set,
+    # not of any cell, so it is computed once. It is never asserted equal to
+    # anything -- it is the size of a mistake, kept on record. The equality that IS
+    # asserted, per cell, is reported == independent, inside run_cell.
+    def _unencoded_baseline(Y: np.ndarray) -> float:
+        with torch.no_grad():
+            raw = transform.transform(torch.tensor(Y, dtype=torch.double))
+        values = raw.detach().cpu().numpy()
+        if not bool((values > reference).all(axis=1).any()):
+            return 0.0
+        return float(
+            compute_ref_pareto_hv(torch.tensor(values, dtype=torch.double), reference)[2]
+        )
+
+    Y_r0_oracle = oracle_predict(oracle, config, X_r0, transform)
+    baseline_unencoded = _unencoded_baseline(Y_r0_oracle)
+
+    print("\n   R1 observed baseline hypervolume")
+    print(f"     on the oracle-scored R0 this sweep uses : "
+          f"{hypervolume(Y_r0_oracle, transform, reference):.6f}"
+          f"   (unencoded would be {baseline_unencoded:.6f})")
+    print(f"     on the real measured R0                 : "
+          f"{hypervolume(Y_r0_measured, transform, reference):.6f}"
+          f"   (unencoded would be {_unencoded_baseline(Y_r0_measured):.6f})")
+    print("     the unencoded figures are what run_r1_ucb produced before "
+          "commit 4b76670")
 
     # ------------------------------------------------------------ conditions --
     cells_spec = full_grid_conditions() if args.full_grid else ofat_conditions()
@@ -1097,8 +1003,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         cells.append(cell)
         rows.append(manifest_row(
             cell, condition_id=position, arm=arm, seed=seed,
-            baseline_model_space=baseline_model_space,
-            baseline_as_called=baseline_as_called,
+            baseline_unencoded=baseline_unencoded,
         ))
         elapsed = time.time() - cell_started
         print(

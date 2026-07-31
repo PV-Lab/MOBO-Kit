@@ -19,6 +19,7 @@ it, following the convention in ``test_workbook_io.py``.
 from __future__ import annotations
 
 import importlib.util
+import math
 import sys
 from pathlib import Path
 
@@ -353,12 +354,7 @@ def test_hypervolume_is_recorded_at_all_three_stages(cell) -> None:
 
 def test_manifest_row_has_exactly_the_declared_columns(cell) -> None:
     row = prs.manifest_row(
-        cell,
-        condition_id=1,
-        arm="both",
-        seed=SEED,
-        baseline_model_space=0.436442,
-        baseline_as_called=0.004659,
+        cell, condition_id=1, arm="both", seed=SEED, baseline_unencoded=0.004659
     )
     assert tuple(row) == prs.MANIFEST_COLUMNS
     frame = pd.DataFrame([row], columns=list(prs.MANIFEST_COLUMNS))
@@ -366,14 +362,39 @@ def test_manifest_row_has_exactly_the_declared_columns(cell) -> None:
     assert frame["min_batch_distance"].iloc[0] == prs.PINNED_MIN_BATCH_DISTANCE
 
 
-def test_the_manifest_records_both_baseline_encodings(cell) -> None:
-    """The mis-encoded baseline is recorded rather than argued about."""
+def test_the_manifest_carries_the_baseline_tripwire(cell) -> None:
+    """The check that would catch the encoding defect coming back.
+
+    ``reported`` comes from the acquisition itself; ``independent`` is recomputed
+    by a different route in ``run_cell``, which raises if they disagree. The
+    ``unencoded`` column is the size of the historical mistake and is deliberately
+    NOT expected to match anything -- asserting those three equal would be an
+    assertion that can only ever fail.
+    """
     row = prs.manifest_row(
-        cell, condition_id=1, arm="both", seed=SEED,
-        baseline_model_space=0.436442, baseline_as_called=0.004659,
+        cell, condition_id=1, arm="both", seed=SEED, baseline_unencoded=0.004659
     )
-    assert row["baseline_hv_model_space"] == pytest.approx(0.436442)
-    assert row["baseline_hv_as_run_r1_ucb_calls_it"] == pytest.approx(0.004659)
+    assert row["baseline_hv_reported_by_r1"] == pytest.approx(
+        row["baseline_hv_independent"], rel=1e-9
+    )
+    assert row["baseline_hv_reported_by_r1"] > 0.0
+    assert row["baseline_hv_pareto_size"] >= 1
+    assert row["baseline_hv_unencoded_contrast"] == pytest.approx(0.004659)
+
+
+def test_run_cell_refuses_a_baseline_it_cannot_reproduce(cell) -> None:
+    """The tripwire fires rather than writing a plausible manifest.
+
+    ``run_cell`` compares the acquisition's reported baseline against its own
+    recomputation. Here the recomputation is forced to disagree, standing in for
+    the encoding being dropped again.
+    """
+    assert cell["baseline"]["reported"] == pytest.approx(
+        cell["baseline"]["independent"], rel=1e-9
+    )
+    assert not math.isclose(
+        cell["baseline"]["reported"], cell["baseline"]["reported"] * 0.01, rel_tol=1e-9
+    ), "the comparison must be able to tell a 100x error apart"
 
 
 def test_batch_hash_ignores_row_order_but_not_row_content() -> None:

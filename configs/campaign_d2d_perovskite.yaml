@@ -276,6 +276,17 @@ review:
       ~240 model configurations at N=15 (permutation p = 0.82), so its predicted
       utility below carries no signal and should not be read as one. Whether that
       is physics or measurement noise is answerable from the R1 replicates.
+    - >
+      WITHDRAWN AND REISSUED. Any R1 batch described before 2026-07-31 is void.
+      run_r1_ucb was scoring candidates against an observed baseline whose
+      thickness axis had collapsed to zero -- it handed the objective transform
+      nanometres where the transform expects log(nm) and exponentiates -- so the
+      baseline hypervolume was 0.004659 against a true 0.436442. Four of the five
+      conditions are unchanged; the fifth moves from speed_1 4000 / precur_conc
+      1.70 to speed_1 2500 / precur_conc 1.45, and the batch's minimum spacing
+      from 0.9209 to 0.6337. No films were fabricated from the withdrawn batch.
+      Full diff in docs/R1_BATCH_WITHDRAWAL.md; the defect is fixed in commit
+      4b76670. Delete this note once R1 is measured.
 
 local_penalization:
   distance_metric: normalized_euclidean

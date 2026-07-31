@@ -389,6 +389,22 @@ thing to collect there is more thickness points per film — not only more films
 
 ## Closed
 
+- **The R1 baseline mis-encoding, found and fixed 2026-07-31. Not a floor
+  question.** `run_r1_ucb` handed `ObjectiveTransform.transform` measurement-space
+  nanometres, which exponentiated them a second time and pinned every
+  observation's thickness utility to exactly 0.0 — baseline hypervolume 0.004659
+  against a true 0.436442. Full account in `CAMPAIGN_STATUS.md` issue 9; the batch
+  it produced was withdrawn (`R1_BATCH_WITHDRAWAL.md`).
+
+  **It is recorded here only to keep it out of the wrong category.** The three
+  floors above are about differences too small to be real. This was not a small
+  difference and not a noisy one: it was a deterministic, reproducible, *wrong*
+  number, off by a factor of 94. A floor tells you when to stop arguing about a
+  gap; it never licenses accepting one. The rule this project already had —
+  *a deterministic difference on the same rows must be explained, not absorbed
+  into a floor* — is what would have caught it, had anyone had a second number to
+  compare the baseline against. Nobody did, which is the actual lesson.
+
 - **The 0.089 optoelectronic gap, closed 2026-07-30 as a numerical artifact.**
   The two pipelines specify the *same model*: a zero-mean GP on `y - trend` and a
   fixed-mean GP on `y` with mean `trend` have identical marginal likelihoods,

@@ -20,7 +20,7 @@ Then verify the state yourself:
 pytest -q
 ```
 
-Expect **425 passed, 0 failed** (~90 s). If that holds, everything below is true.
+Expect **465 passed, 0 failed** (~110 s). If that holds, everything below is true.
 Two tests open a real tkinter window and drive it; they skip themselves without a
 display. Nothing in the suite needs the private workbook — the tests that would use
 it skip when it is absent.
@@ -63,11 +63,17 @@ python scripts/dtlz2_parameter_sweep.py               # beta x radius
 Everything numbered in `CAMPAIGN_STATUS.md` is closed, wired-and-waiting, or needs
 a person rather than code. In rough priority:
 
-1. **Nobody has reviewed a proposed batch yet.** The artifact exists and says what
-   it should — including that the `speed_1 = 1000` corner is being skipped as
-   *known and bad* because the thickness trend extrapolates confidently to its
-   range edge, where the only two observations disagree with each other. Fifteen
-   films is a real cost. This is a human decision and is not automated.
+1. **Nobody has reviewed a proposed batch yet, and the batch was reissued on
+   2026-07-31.** The first one was withdrawn: `run_r1_ucb` had been scoring
+   candidates against an observed baseline whose thickness axis collapsed to zero
+   (`docs/R1_BATCH_WITHDRAWAL.md`, and issue 9 in `CAMPAIGN_STATUS.md`). Four of
+   the five conditions survived; one was replaced. **No films were fabricated from
+   the withdrawn batch** — the review gate did exactly what it exists for.
+   The reissued sheet is `local_inputs/Summary Table_R1_Candidates.xlsx`, and it
+   still says what it should, including that the `speed_1 = 1000` corner is being
+   skipped as *known and bad* because the thickness trend extrapolates confidently
+   to its range edge, where the only two observations disagree with each other.
+   Fifteen films is a real cost. This is a human decision and is not automated.
 2. **The campaign is running on data the group calls test data.** When a corrected
    or re-measured workbook arrives, run `python scripts/intake_new_data.py
    --workbook <path>`. It re-derives the floors at the new N and gives a
@@ -137,7 +143,25 @@ the workbook's rounded `Thickness (avg)` while the model now trains on the
 unrounded mean. The one visible disagreement — plain thickness +0.183 against
 +0.116 — is entirely that, and no conclusion depends on it.
 
-## Four facts about the tooling that will bite you
+## The one that actually bit, and the shape it shares with two others
+
+**`ObjectiveTransform.transform` takes MODEL-space values, not measurements.** It
+decodes the link itself — `exp()` for a log objective — so handing it thickness in
+nanometres exponentiates a value that was never a logarithm. `exp(360…1303)`
+saturates the 650 nm Gaussian to exactly `0.0`, which is finite, so nothing
+raises. `run_r1_ucb` did this to its observed HVI baseline for the life of the
+campaign: baseline hypervolume **0.004659 against a true 0.436442**, and one of
+five proposed conditions was an artifact of it. Use
+`transform.transform_measurements` at any call site holding workbook values.
+
+It is the **third plausible-finite-number failure** here, after the hypervolume
+auto-reference and the swallowed `train_Yvar`. All three were finite,
+ordinary-looking wrong answers compared against nothing. The defence that works is
+not another guard — each passed every guard it met — it is making the quantity
+observable and reproducing it by a second route. If you add a number that steers a
+decision, add the comparator with it.
+
+## Four more facts about the tooling that will bite you
 
 - **openpyxl discards cached formula values on save.** Verified: `Z2:Z4` read
   `[0.657, 0.587, 0.561]` before a save that only added an empty sheet, and

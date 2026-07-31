@@ -154,9 +154,11 @@ src/mobo_kit/
   data.py, constraints.py, utils.py
 
 configs/   campaign_d2d_perovskite.yaml (the live campaign) + two examples
-docs/      HANDOFF.md, CAMPAIGN_STATUS.md, GP_MODEL_DECISION.md
-scripts/   diagnostics, report figures, intake_new_data.py, dtlz2_parameter_sweep.py
-tests/     425 tests
+docs/      HANDOFF.md, CAMPAIGN_STATUS.md, GP_MODEL_DECISION.md,
+           R1_BATCH_WITHDRAWAL.md, ROUND_SIM_DELTA.md, ROUND_SIM_MANIFEST.md
+scripts/   diagnostics, report figures, intake_new_data.py,
+           dtlz2_parameter_sweep.py, plot_round_simulation.py
+tests/     465 tests
 launch_mobo_kit.bat, launch_mobo_kit.command   double-click entry points
 ```
 

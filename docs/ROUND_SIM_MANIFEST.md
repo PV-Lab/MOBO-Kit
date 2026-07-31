@@ -33,8 +33,10 @@ Column order is pinned by `MANIFEST_COLUMNS` in the script and asserted by
 | `hv_r0_r1_r2` | float | After adding the 3 R2 conditions. |
 | `hv_gain_r1` | float | `hv_r0_r1 - hv_r0`. |
 | `hv_gain_r2` | float | `hv_r0_r1_r2 - hv_r0_r1`. |
-| `baseline_hv_model_space` | float | The R1 observed baseline hypervolume with the objective link decoded once — what this script uses. Constant across rows; it is a property of the observed set. |
-| `baseline_hv_as_run_r1_ucb_calls_it` | float | The same quantity as `campaign.run_r1_ucb` currently encodes it. Constant across rows. See `ROUND_SIM_DELTA.md` §1: the gap is not a rounding difference. |
+| `baseline_hv_reported_by_r1` | float | The observed HVI baseline the R1 acquisition actually used, from `run_r1_ucb`'s own diagnostics. |
+| `baseline_hv_independent` | float | The same quantity recomputed by the script through `metrics.compute_ref_pareto_hv` — a different Pareto filter and a different call path. **`run_cell` raises if these two disagree.** |
+| `baseline_hv_pareto_size` | int | How many observations sit on the baseline Pareto front. Under the historical mis-encoding this was 2; correctly encoded it is 5. |
+| `baseline_hv_unencoded_contrast` | float | What the baseline *would* be if measurement-space values reached the transform directly — the size of the defect fixed in commit `4b76670`. Constant across rows, and **never expected to equal anything**. |
 | `r1_fit_warnings` | int | Fit-guard warnings raised by the GP that proposed R1. Guard warnings only, not the ~18 numpy deprecation notices per fit. |
 | `r2_fit_warnings` | int | The same for the R2 model. |
 | `final_fit_warnings` | int | The same for the 23-point model the heatmaps render. Non-zero puts a banner on that cell's figures. |
@@ -53,5 +55,11 @@ the *size* of `hv_gain_r1` compared across cells, and the batch hashes.
 Their hypervolumes and utilities are then identical by construction, not by
 agreement, and quoting them as independent replicates would be double counting.
 
-**Both baseline columns are constant within a run.** They are recorded per row so a
-single row is self-describing when it is pasted somewhere else.
+**The baseline columns are the standing tripwire for the encoding defect.**
+`reported` comes from inside the acquisition; `independent` is recomputed by a
+different route; `run_cell` raises rather than writing a manifest if they differ.
+`unencoded_contrast` is the size of the historical mistake and is deliberately not
+compared to anything — asserting all three equal would be an assertion that can
+only ever fail, because the third column exists precisely to reproduce the wrong
+answer. They are constant within a run, and recorded per row so a single row is
+self-describing when pasted somewhere else.
