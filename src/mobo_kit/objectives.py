@@ -231,6 +231,58 @@ class ObjectiveTransform:
 
     __call__ = transform
 
+    def encode_measurements(self, Y_measured: torch.Tensor) -> torch.Tensor:
+        """MEASUREMENT-space values into the MODEL space :meth:`transform` expects.
+
+        :meth:`transform` is a *model-output* decoder: its first act is to undo the
+        link, so a ``log`` objective is exponentiated before the utility is
+        computed.  Handing it a raw measurement therefore exponentiates a value
+        that was never a logarithm.
+
+        **This fails silently and it has.** ``run_r1_ucb`` passed thickness in
+        nanometres here until 2026-07-31; ``exp(360…1303)`` saturates the 650 nm
+        Gaussian to exactly ``0.0``, which is finite, so neither the transform's
+        own finiteness check nor the caller's noticed. Every observation's
+        thickness utility was zero, and the UCB-HVI baseline hypervolume came out
+        0.004659 where the correct value is 0.436442 -- a factor of 94, against
+        which every candidate looked like a large improvement.
+
+        Use this, or :meth:`transform_measurements`, wherever the values in hand
+        are what the workbook reports rather than what the GP emits.
+        """
+        if not isinstance(Y_measured, torch.Tensor):
+            raise TypeError("Y_measured must be a torch.Tensor.")
+        if not Y_measured.is_floating_point():
+            raise TypeError("Y_measured must use a floating dtype.")
+        if Y_measured.ndim < 1 or Y_measured.shape[-1] != self.objective_count:
+            raise ValueError(
+                f"Y_measured final dimension must be {self.objective_count}; "
+                f"got shape {tuple(Y_measured.shape)}."
+            )
+        if not torch.isfinite(Y_measured).all():
+            raise ValueError("Y_measured must contain only finite values.")
+        columns: list[torch.Tensor] = []
+        for index, spec in enumerate(self.specs):
+            column = Y_measured[..., index]
+            if spec.model_link == "log":
+                if not bool((column > 0).all()):
+                    raise ValueError(
+                        f"Objective {spec.name!r} has a log link, so its measured "
+                        "values must be strictly positive."
+                    )
+                column = torch.log(column)
+            columns.append(column)
+        return torch.stack(columns, dim=-1)
+
+    def transform_measurements(self, Y_measured: torch.Tensor) -> torch.Tensor:
+        """Utility straight from MEASUREMENT-space values.
+
+        The one-call safe route: :meth:`encode_measurements` then
+        :meth:`transform`.  Prefer it at any call site holding workbook values, so
+        the encoding step cannot be forgotten.
+        """
+        return self.transform(self.encode_measurements(Y_measured))
+
     def expected_transform(
         self, mean: torch.Tensor, variance: torch.Tensor
     ) -> torch.Tensor:

@@ -707,10 +707,21 @@ def run_r1_ucb(
         row_constraints=constraints_from_config(dict(config), design) or None,
     )
 
+    # The HVI baseline is the utility of what has already been measured, so it must
+    # reach the transform in the MODEL's space -- the transform decodes the link
+    # itself. Passing measurement-space values here exponentiated thickness a
+    # second time and pinned every observation's thickness utility to exactly 0.0,
+    # silently: the baseline hypervolume was 0.004659 against a true 0.436442, so
+    # every candidate was scored against a front with no thickness axis at all.
+    # Fixed 2026-07-31; see ObjectiveTransform.encode_measurements.
+    observed_baseline = transform.encode_measurements(
+        torch.tensor(np.asarray(observed_Y_raw, dtype=float), dtype=torch.double)
+    )
+
     proposal = propose_ucb_hvi_batch(
         pool,
         model,
-        observed_Y_raw,
+        observed_baseline,
         transform,
         reference,
         q=q,
@@ -744,6 +755,16 @@ def run_r1_ucb(
             "pool_size": pool.size,
             "objective_contract": transform.version,
             "moment_method": str(settings.get("moment_method", "monte_carlo")),
+            # Surfaced so the baseline is checkable from outside rather than only
+            # inside the acquisition. It was wrong for the life of this campaign
+            # and nothing could see it; a number nobody can compare is how the
+            # previous two silent-failure bugs survived as well.
+            "observed_baseline_hypervolume": float(
+                proposal.scoring.baseline_hypervolume
+            ),
+            "observed_baseline_pareto_size": int(
+                proposal.scoring.pareto_utility.shape[0]
+            ),
             "off_grid_observations_excluded_from_pool_bookkeeping": int(
                 (~on_grid).sum()
             ),

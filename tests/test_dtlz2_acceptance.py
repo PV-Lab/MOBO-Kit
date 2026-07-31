@@ -43,6 +43,7 @@ from mobo_kit.campaign import (
     run_r2_qlognehvi,
 )
 from mobo_kit.design import build_design_from_config
+from mobo_kit.ucb_hvi import pareto_utility_above_reference
 
 INPUT_DIM = 10
 OBJECTIVES = 3
@@ -132,7 +133,13 @@ def _hypervolume(config: dict, Y_raw: np.ndarray) -> float:
     """
     transform = build_objective_transform(config)
     reference = torch.tensor(config["reference_point_utility"], dtype=torch.double)
-    utility = transform(torch.tensor(np.asarray(Y_raw, float), dtype=torch.double))
+    # transform_measurements, not transform: Y_raw holds MEASUREMENT-space values,
+    # and transform decodes the link itself. The two are the same call while every
+    # objective is affine, which is exactly why this file could not see the R1
+    # baseline bug -- see test_measurement_space_encoding.py.
+    utility = transform.transform_measurements(
+        torch.tensor(np.asarray(Y_raw, float), dtype=torch.double)
+    )
     if not bool((utility >= reference).all(dim=-1).any()):
         raise AssertionError(
             "No point dominates the reference point. BoTorch would silently drop "
@@ -142,23 +149,24 @@ def _hypervolume(config: dict, Y_raw: np.ndarray) -> float:
     return Hypervolume(ref_point=reference).compute(utility[is_non_dominated(utility)])
 
 
-def _run_campaign(config: dict, seed: int) -> dict:
+def _run_campaign(config: dict, seed: int, evaluate=None) -> dict:
     """One full R0 -> R1 -> R2 pass, evaluating DTLZ2 at each proposed batch."""
     problem = _problem()
+    evaluate = _evaluate if evaluate is None else evaluate
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         r0 = run_r0_lhs(config, n=R0_SIZE, seed=seed)
         X0 = r0.conditions.to_numpy(float)
-        Y0 = _evaluate(problem, X0)
+        Y0 = evaluate(problem, X0)
 
         r1 = run_r1_ucb(config, X0, Y0, seed=seed)
         X1 = r1.conditions.to_numpy(float)
-        Y1 = _evaluate(problem, X1)
+        Y1 = evaluate(problem, X1)
 
         X01, Y01 = np.vstack([X0, X1]), np.vstack([Y0, Y1])
         r2 = run_r2_qlognehvi(config, X01, Y01, seed=seed)
         X2 = r2.conditions.to_numpy(float)
-        Y2 = _evaluate(problem, X2)
+        Y2 = evaluate(problem, X2)
 
     return {
         "r0": r0,
@@ -260,6 +268,148 @@ def test_the_batches_are_deterministic_for_a_fixed_seed(campaign: dict) -> None:
     np.testing.assert_allclose(
         repeat["r2"].conditions.to_numpy(float), campaign["X"][2]
     )
+
+
+# --------------------------------------------------------------------------- #
+# every link type the campaign uses, exercised end to end
+# --------------------------------------------------------------------------- #
+#
+# Added 2026-07-31, after `run_r1_ucb` was found to have been handing the objective
+# transform measurement-space values for the life of the campaign. This file could
+# not have caught it: every objective above is affine, and for an affine objective
+# measurement space and model space are the same numbers, so a link-encoding
+# mistake is invisible BY CONSTRUCTION.
+#
+# The live campaign has a log-link objective (thickness trains on log(nm)), so the
+# synthetic acceptance test must have one too, or "the loop passes end to end"
+# keeps meaning "the loop passes end to end for half of the link types in use".
+
+
+def _config_with_log_link(pool: int = 1024, mc_samples: int = 32) -> dict:
+    """The same DTLZ2 problem with its third objective reached through a log link.
+
+    ``f2`` is reported as ``exp(f2)`` -- a strictly positive measurement -- and the
+    objective declares ``response: log``. The GP therefore trains on
+    ``log(exp(f2)) = f2``: the SAME latent quantity the affine config models,
+    reached by a different route. Any mis-encoding shows up as a difference in
+    something that ought to be identical.
+    """
+    config = _config(pool=pool, mc_samples=mc_samples)
+    config["objectives"]["contract_version"] = "TEST_ONLY-dtlz2-loglink-v1"
+    config["objectives"]["specs"][2] = {
+        "name": "f2",
+        "goal": "maximize",
+        "transform": "affine",
+        "model_source_column": "f2",
+        # negated DTLZ2 lands in roughly [-1.9, 0], so exp() lands in [0.15, 1]
+        "lower_anchor": float(np.exp(-2.0)),
+        "upper_anchor": 1.0,
+        "mean_function": {
+            "response": "log",
+            "features": [{"column": "x0", "transform": "identity"}],
+        },
+    }
+    return config
+
+
+def _evaluate_log_linked(problem: DTLZ2, X_phys: np.ndarray) -> np.ndarray:
+    Y = _evaluate(problem, X_phys)
+    return np.column_stack([Y[:, 0], Y[:, 1], np.exp(Y[:, 2])])
+
+
+@pytest.fixture(scope="module")
+def log_linked_campaign() -> dict:
+    return _run_campaign(
+        _config_with_log_link(), seed=73, evaluate=_evaluate_log_linked
+    )
+
+
+def test_the_log_link_config_really_is_log_linked() -> None:
+    """Guards the guard: if this reverts to identity the tests below go quiet."""
+    specs = build_objective_transform(_config_with_log_link()).specs
+    assert [spec.model_link for spec in specs] == ["identity", "identity", "log"]
+    # and the plain config remains the affine-only case, so both are covered
+    assert [s.model_link for s in build_objective_transform(_config()).specs] == [
+        "identity"
+    ] * OBJECTIVES
+
+
+def test_a_log_linked_campaign_runs_end_to_end(log_linked_campaign: dict) -> None:
+    assert len(log_linked_campaign["r0"].conditions) == R0_SIZE
+    assert len(log_linked_campaign["r1"].conditions) == R1_SIZE
+    assert len(log_linked_campaign["r2"].conditions) == R2_SIZE
+    for key in ("r0", "r1", "r2"):
+        report = log_linked_campaign[key].diagnostics["validity"]
+        assert report["unique"] and report["on_grid"] and report["in_bounds"]
+    hv0, hv1, hv2 = log_linked_campaign["hv"]
+    assert 0.0 < hv0 <= hv1 <= hv2
+
+
+def test_no_observed_utility_collapses_to_zero_under_a_log_link(
+    log_linked_campaign: dict,
+) -> None:
+    """The invariant the R1 baseline bug violated.
+
+    Under the mis-encoding every observation scored exactly 0.0 on the log-linked
+    axis -- a finite, unremarkable number that no check rejected. A measured point
+    with a finite value inside its anchors has non-zero utility; a hard zero means
+    an encoding step was skipped.
+
+    Only points whose raw value lies strictly INSIDE the objective's anchors are
+    checked. An affine objective legitimately clips to 0.0 when a measurement falls
+    at or below its lower anchor, and DTLZ2 does produce such points; asserting on
+    those would be asserting that clipping is a bug.
+    """
+    config = _config_with_log_link()
+    transform = build_objective_transform(config)
+    spec = transform.specs[2]
+    problem = _problem()
+    checked = 0
+    for X in log_linked_campaign["X"]:
+        Y = _evaluate_log_linked(problem, X)
+        utility = transform.transform_measurements(
+            torch.tensor(Y, dtype=torch.double)
+        ).numpy()
+        assert np.isfinite(utility).all()
+        raw = Y[:, 2]
+        inside = (raw > spec.lower_anchor) & (raw < spec.upper_anchor)
+        assert not np.any(utility[inside, 2] == 0.0), (
+            "a finite measurement strictly inside its anchors scored exactly zero"
+        )
+        checked += int(inside.sum())
+    # the assertion above is vacuous if nothing was inside the anchors
+    assert checked >= 15, f"only {checked} points were in range; test has no teeth"
+
+
+def test_the_r1_baseline_is_right_when_a_link_has_to_be_decoded(
+    log_linked_campaign: dict,
+) -> None:
+    """End-to-end version of the comparator that did not exist.
+
+    ``run_r1_ucb`` reports the baseline hypervolume it actually used; this
+    recomputes it by an independent route. On the pre-fix code the reported value
+    is the collapsed one and this fails.
+    """
+    config = _config_with_log_link()
+    transform = build_objective_transform(config)
+    reference = np.asarray(config["reference_point_utility"], dtype=float)
+
+    X0 = log_linked_campaign["r0"].conditions.to_numpy(float)
+    Y0 = _evaluate_log_linked(_problem(), X0)
+    utility = transform.transform_measurements(
+        torch.tensor(Y0, dtype=torch.double)
+    ).numpy()
+    pareto = pareto_utility_above_reference(utility, reference)
+    expected = float(
+        Hypervolume(ref_point=torch.tensor(reference, dtype=torch.double)).compute(
+            torch.tensor(pareto, dtype=torch.double)
+        )
+    )
+    reported = log_linked_campaign["r1"].diagnostics["observed_baseline_hypervolume"]
+    assert reported == pytest.approx(expected, rel=1e-9)
+    assert log_linked_campaign["r1"].diagnostics[
+        "observed_baseline_pareto_size"
+    ] == len(pareto)
 
 
 @pytest.mark.slow
