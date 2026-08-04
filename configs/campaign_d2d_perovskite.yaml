@@ -173,6 +173,8 @@ objectives:
     # "T anom" holds readings the operator judged anomalous (sample 4: 1618
     # against its own 650/655/670/680; sample 14: 630). They never enter the mean;
     # their presence is reported so the exclusion is visible rather than silent.
+    # CONFIRMED by the group 2026-07-31: the operator's judgement is the intended
+    # filter, so these stay excluded and stay reported.
     #
     # X is ROUND(mean(T1..T4)), so it can legitimately differ by half a
     # nanometre -- hence atol 0.5 rather than a tight tolerance. Against
@@ -182,6 +184,11 @@ objectives:
     # into two clusters rather than scattering: sample 12 is 1600 and 709, and its
     # recorded 1155 nm is the midpoint of the two. Sample 12 also carries the
     # highest leverage in the design (0.462), so this is worth hearing about.
+    # CONFIRMED by the group 2026-07-31: that variation is real and the MEAN is
+    # the intended summary, so no re-derivation, exclusion or re-weighting. The
+    # warning stays on anyway -- what was settled is the action, not the fact, and
+    # a row whose readings split 2.3-fold is still a different kind of observation
+    # from one whose readings agree to 3%.
     measurement:
       recipe: mean_of_present
       inputs:
@@ -349,6 +356,14 @@ reproducibility:
   record_environment_versions: true
   record_resolved_config_hash: true
 
-# No process constraint applies to this campaign. The legacy humidity/temperature
-# Clausius-Clapeyron constraint is for a different design.
+# EMPTY DELIBERATELY, confirmed by the group 2026-07-31. No process constraint
+# applies to this campaign; the legacy humidity/temperature Clausius-Clapeyron
+# constraint is for a different design.
+#
+# This is a decision, not an omission, and it is the reason `anneal_temp` is free
+# to sit at its lower bound in every proposed condition. The optimum of a monotone
+# mean function is at a range edge by construction, so if the group would never
+# anneal below some temperature, the fix is a bound DECLARED here rather than a
+# batch quietly discarded later. Adding one is a one-key change; see
+# docs/CAMPAIGN_STATUS.md issue 4.
 constraints: []

@@ -20,7 +20,7 @@ Then verify the state yourself:
 pytest -q
 ```
 
-Expect **465 passed, 0 failed** (~110 s). If that holds, everything below is true.
+Expect **478 passed, 0 failed** (~110 s). If that holds, everything below is true.
 Two tests open a real tkinter window and drive it; they skip themselves without a
 display. Nothing in the suite needs the private workbook — the tests that would use
 it skip when it is absent.
@@ -74,14 +74,30 @@ a person rather than code. In rough priority:
    skipped as *known and bad* because the thickness trend extrapolates confidently
    to its range edge, where the only two observations disagree with each other.
    Fifteen films is a real cost. This is a human decision and is not automated.
-2. **The campaign is running on data the group calls test data.** When a corrected
-   or re-measured workbook arrives, run `python scripts/intake_new_data.py
-   --workbook <path>`. It re-derives the floors at the new N and gives a
-   per-objective keep-or-delete verdict on each mean function. Re-measuring
-   samples 12 and 8 would be the single highest-value experiment: sample 12's
-   1155 nm is `ROUND(mean(1600, 709))`, and because `speed_1` is a *feature of the
-   thickness mean function*, re-measuring it moves the fitted trend and therefore
-   the model's belief about the whole low-speed region — not just two points.
+2. **The campaign is running on data the group calls test data, and workbook or
+   formula changes are anticipated.** When a corrected or re-measured workbook
+   arrives, run `python scripts/intake_new_data.py --workbook <path>`. It
+   re-derives the floors at the new N and gives a per-objective keep-or-delete
+   verdict on each mean function.
+
+   **Route any change through the config, not through code.** A changed
+   measurement column or a changed score formula is a `objectives.specs[].measurement`
+   recipe edit plus a bump of `objectives.contract_version`, followed by one intake
+   run. The version bump is the part people skip: utility space is what
+   hypervolume is measured in, so a silently redefined objective makes every
+   cross-round number incomparable while every plot still renders. `scores.py`
+   recomputes from raw columns and cross-checks the stored cells, so a stale pasted
+   literal announces itself rather than propagating.
+
+   **Note what the group's 2026-07-31 decision did to the re-measurement case.**
+   Re-measuring samples 12 and 8 was previously the highest-value experiment on the
+   grounds that sample 12's 1155 nm — `ROUND(mean(1600, 709))` — had a weak claim
+   to being one measurement. The group has now confirmed that variation is *real*
+   and the mean is the intended summary, so re-measuring would reproduce the spread
+   rather than resolve it. What survives is the narrower version already on record:
+   collect **more thickness points per film** in the low-speed region, not more
+   films. The leverage fact is unchanged — `speed_1` is a feature of the thickness
+   mean function, so that region still moves the fitted trend rather than one point.
 3. **Phase 4 needs the R1 triplicates.** `replicate_variance.py` is wired and
    tested against synthetic replicates; enabling it is one config key
    (`model.observation_noise: replicate_pooled`).

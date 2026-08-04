@@ -732,6 +732,27 @@ def plot_shap(
     save: Optional[str] = None,
     show_plot: bool = True,
 ):
+    """Mean |SHAP| bars over each GP's RAW posterior mean.  Demo path only.
+
+    Kept because ``notebooks/MOBO_demo_annotated.ipynb`` calls it. For the campaign
+    use ``scripts/plot_shap_attribution.py`` instead, which differs in three ways
+    that change what the bars mean:
+
+    * **It explains the raw model output, not utility.** For a log-link objective
+      that is ``log(nm)``, so the campaign's 650 nm Gaussian target is never
+      applied and features are ranked by their effect on log thickness rather than
+      on how good the film is. The campaign script explains
+      ``E[utility]`` through ``ObjectiveTransform.expected_transform``.
+    * **``nsamples=300`` is below the 1024 coalitions that ten inputs need**, so
+      these values are a sampled approximation, and an unseeded one. At ten
+      features the campaign script's explainer enumerates exhaustively, which makes
+      its attributions exact and reproducible.
+    * **It explains only the training points.** The campaign script attributes over
+      a sampled on-grid pool, so the picture covers the design space rather than
+      the handful of recipes already run.
+
+    None of that is wrong for a demo. It is wrong for deciding anything.
+    """
     X_eval = np.asarray(train_X, dtype=float)
     feature_names = design.names
     M = getattr(model, "num_outputs", len(model.models))

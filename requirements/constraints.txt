@@ -7,6 +7,14 @@
 # on this stack a second-decimal change in LOO R2 is inside the numerical floor
 # (see docs/GP_MODEL_DECISION.md). Pin it so a reproduction is a reproduction.
 #
+# shap is pinned for the same reason: scripts/plot_shap_attribution.py relies on
+# KernelExplainer enumerating ALL 2**10 coalitions at ten inputs, which is what
+# makes its attributions exact and reproducible rather than sampled. That sample
+# budget is a library default, not an API guarantee -- a version that changed it
+# would silently turn every attribution into an approximation, and nothing would
+# fail. The suite's additivity check would catch it; the pin is so it never gets
+# the chance on a fresh install.
+#
 # (docs/STEP1_HANDOFF.md, referenced here until 2026-07-30, was removed in the
 # cleanup commit 33f101f. docs/HANDOFF.md is the current entry point.)
 numpy==2.2.6

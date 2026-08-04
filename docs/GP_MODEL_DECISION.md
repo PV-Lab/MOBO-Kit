@@ -381,6 +381,26 @@ It also makes the low-speed corner a **measurement** question before it is a
 physics question. Probing `speed_1 = 1000` in R1 is still right, and the specific
 thing to collect there is more thickness points per film — not only more films.
 
+### Resolved by the group, 2026-07-31: the means are the intended summary
+
+The group confirms that **the within-film thickness variation on samples 8, 12 and
+15 is real, and the mean of the readings is the intended summary** for each. So
+`mean_of_present` stays, sample 12's 1155 nm stays, and nothing above is a defect
+to be corrected.
+
+**Do not read this as the findings being retracted.** `spread_warning_ratio: 0.25`
+still fires on those three rows and should keep firing: a film whose readings split
+2.3-fold is a different kind of observation from one whose readings agree to 3%,
+and a reader comparing leverage across rows needs to know which is which. What is
+settled is the *action* — no re-derivation, no exclusion, no re-weighting — not the
+*fact*. Sample 12's leverage of 0.462 is still the highest in the design and still
+worth knowing when its region is discussed.
+
+The `T anom` exclusion is confirmed on the same basis: those readings (sample 4's
+1618 against its own 650/655/670/680, sample 14's 630) were judged anomalous by the
+operator, and the operator's judgement is the intended filter. They stay out of the
+mean and their presence stays reported.
+
 ## Open
 
 - **Does linear-mean-plus-GP beat linear-mean-alone?** +0.355 against +0.244 is

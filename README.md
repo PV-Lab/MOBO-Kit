@@ -154,12 +154,16 @@ src/mobo_kit/
   candidate_diagnostics.py, acquisition.py, cli.py, main.py,
   data.py, constraints.py, utils.py
 
+  research_qnehvi.py      qNEHVI as a research-only R2 variant, NOT the campaign
+
 configs/   campaign_d2d_perovskite.yaml (the live campaign) + two examples
 docs/      HANDOFF.md, CAMPAIGN_STATUS.md, GP_MODEL_DECISION.md,
-           R1_BATCH_WITHDRAWAL.md, ROUND_SIM_DELTA.md, ROUND_SIM_MANIFEST.md
+           R1_BATCH_WITHDRAWAL.md, ROUND_SIM_DELTA.md, ROUND_SIM_MANIFEST.md,
+           SHAP_SUMMARY.md
 scripts/   diagnostics, report figures, intake_new_data.py,
-           dtlz2_parameter_sweep.py, plot_round_simulation.py
-tests/     465 tests
+           dtlz2_parameter_sweep.py, plot_round_simulation.py,
+           plot_shap_attribution.py
+tests/     478 tests
 launch_mobo_kit.bat, launch_mobo_kit.command   double-click entry points
 ```
 
