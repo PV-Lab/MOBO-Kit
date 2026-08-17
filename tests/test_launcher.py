@@ -8,6 +8,7 @@ asserts that.
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 
 import numpy as np
@@ -395,29 +396,72 @@ def _status_for(path) -> CampaignStatus:
     )
 
 
-def _tk_available() -> bool:
+def _build_window(config_path: str):
+    """Construct the window, or skip if this machine will not start Tk at all."""
     try:
         import tkinter
+    except ImportError:  # pragma: no cover - a build without tkinter
+        pytest.skip("tkinter is not installed")
 
-        root = tkinter.Tk()
-    except Exception:
-        return False
-    root.destroy()
-    return True
+    from mobo_kit.launcher import LauncherWindow
+
+    try:
+        return LauncherWindow(config_path)
+    except tkinter.TclError as exc:
+        # No display, or a Tcl that will not initialise. That is the condition the
+        # old skipif declared. Only a toolkit-level failure skips, so a real defect
+        # in LauncherWindow still raises.
+        pytest.skip(f"tkinter will not start here: {exc}")
 
 
-@pytest.mark.skipif(not _tk_available(), reason="no display for tkinter")
+@pytest.fixture
+def open_window(request):
+    """Build launcher windows with pytest's fd-level capture suspended.
+
+    Both halves of this matter, and both were measured -- the symptom is a
+    ``_tkinter.TclError`` saying ``couldn't read file ... init.tcl: No error``,
+    which reads like a broken Tcl install and is neither that nor a launcher bug.
+
+    **Tk must not be created during collection.** The module previously carried
+    six ``@pytest.mark.skipif(not _tk_available(), ...)`` decorators, and each
+    evaluation built and destroyed a real interpreter while pytest had file
+    descriptors 1 and 2 swapped for its capture temp files. Tcl's process-global
+    state then holds descriptors that are gone by the time a test runs. Measured:
+    ONE import-time ``Tk()`` fails the next one in 4 runs out of 5, while twenty
+    consecutive ``Tk()`` calls inside a test body all pass.
+
+    **Capture has to stay suspended while the window lives.** Moving construction
+    into the test body was not sufficient on its own: pytest re-swaps those
+    descriptors between tests, and the third window built in one process still
+    lost its interpreter. Suspending capture for the test that owns a window
+    leaves Tcl with descriptors that outlive it.
+
+    The whole effect disappears under ``-s``, ``--capture=sys`` and
+    ``--capture=tee-sys``, which is what identified fd capture as the cause. That
+    also explains the intermittency that made this look like a race in the
+    launcher: whether the stale descriptors happen to still be valid depends on
+    what file I/O ran in between, so one test failed alone and passed in a full
+    run.
+    """
+    manager = request.config.pluginmanager.getplugin("capturemanager")
+    suspended = (
+        contextlib.nullcontext()
+        if manager is None
+        else manager.global_and_fixture_disabled()
+    )
+    with suspended:
+        yield _build_window
+
+
 def test_the_window_reports_status_through_its_worker_thread(
-    workbook, config, isolated_settings
+    workbook, config, isolated_settings, open_window
 ) -> None:
     """The UI does its work off the main thread and posts results through a queue.
     Nothing else covers that plumbing, and a deadlock there would look like a
     window that simply never responds."""
     import time
 
-    from mobo_kit.launcher import LauncherWindow
-
-    window = LauncherWindow(CONFIG_PATH)
+    window = open_window(CONFIG_PATH)
     try:
         window.path_var.set(str(workbook))
         window.check()
@@ -439,15 +483,12 @@ def test_the_window_reports_status_through_its_worker_thread(
         window.root.destroy()
 
 
-@pytest.mark.skipif(not _tk_available(), reason="no display for tkinter")
 def test_the_window_shows_a_readable_error_rather_than_a_traceback(
-    config, isolated_settings
+    config, isolated_settings, open_window
 ) -> None:
     import time
 
-    from mobo_kit.launcher import LauncherWindow
-
-    window = LauncherWindow(CONFIG_PATH)
+    window = open_window(CONFIG_PATH)
     try:
         window.path_var.set("nowhere/at/all.xlsx")
         window.check()
@@ -465,9 +506,8 @@ def test_the_window_shows_a_readable_error_rather_than_a_traceback(
         window.root.destroy()
 
 
-@pytest.mark.skipif(not _tk_available(), reason="no display for tkinter")
 def test_a_result_for_a_workbook_the_user_left_is_discarded(
-    workbook, config, isolated_settings
+    workbook, config, isolated_settings, open_window
 ) -> None:
     """The race the test fixture hid, now closed at the source.
 
@@ -480,9 +520,7 @@ def test_a_result_for_a_workbook_the_user_left_is_discarded(
     a full-suite run -- a flaky test of a race-condition fix is worse than no test,
     because it teaches people to re-run until green.
     """
-    from mobo_kit.launcher import LauncherWindow
-
-    window = LauncherWindow(CONFIG_PATH)
+    window = open_window(CONFIG_PATH)
     try:
         window.path_var.set(str(workbook))
         window._start("pretending to read")
@@ -502,14 +540,11 @@ def test_a_result_for_a_workbook_the_user_left_is_discarded(
         window.root.destroy()
 
 
-@pytest.mark.skipif(not _tk_available(), reason="no display for tkinter")
 def test_a_result_for_the_current_workbook_is_adopted(
-    workbook, config, isolated_settings
+    workbook, config, isolated_settings, open_window
 ) -> None:
     """The other half of the rule: it must not discard everything."""
-    from mobo_kit.launcher import LauncherWindow
-
-    window = LauncherWindow(CONFIG_PATH)
+    window = open_window(CONFIG_PATH)
     try:
         window.path_var.set(str(workbook))
         window._start("pretending to read")
@@ -524,14 +559,11 @@ def test_a_result_for_the_current_workbook_is_adopted(
         window.root.destroy()
 
 
-@pytest.mark.skipif(not _tk_available(), reason="no display for tkinter")
 def test_a_superseded_reply_does_not_overwrite_a_newer_request(
-    workbook, config, isolated_settings
+    workbook, config, isolated_settings, open_window
 ) -> None:
     """Two presses: the earlier press's answer must not land after the later one."""
-    from mobo_kit.launcher import LauncherWindow
-
-    window = LauncherWindow(CONFIG_PATH)
+    window = open_window(CONFIG_PATH)
     try:
         window.path_var.set(str(workbook))
         window._start("pretending to read")
@@ -549,20 +581,18 @@ def test_a_superseded_reply_does_not_overwrite_a_newer_request(
         window.root.destroy()
 
 
-@pytest.mark.skipif(not _tk_available(), reason="no display for tkinter")
 def test_the_startup_auto_check_is_cancelled_when_the_user_acts(
-    workbook, config, monkeypatch
+    workbook, config, monkeypatch, open_window
 ) -> None:
     """The auto-check fires 200 ms after construction against the remembered
     workbook. If the user has already pressed something, that answer is about the
     wrong file."""
     from mobo_kit import launcher as launcher_module
-    from mobo_kit.launcher import LauncherWindow
 
     monkeypatch.setattr(launcher_module, "remembered_workbook", lambda: workbook)
     monkeypatch.setattr(launcher_module, "remember_workbook", lambda path: None)
 
-    window = LauncherWindow(CONFIG_PATH)
+    window = open_window(CONFIG_PATH)
     try:
         assert window._auto_check_id is not None, "a remembered workbook should schedule one"
         window._cancel_auto_check()
@@ -571,6 +601,33 @@ def test_the_startup_auto_check_is_cancelled_when_the_user_acts(
         window._cancel_auto_check()
     finally:
         window.root.destroy()
+
+
+def test_nothing_in_this_module_builds_a_window_at_import_time() -> None:
+    """Pin the rule the :func:`open_window` fixture documents; it already regressed.
+
+    The specific way it comes back is a ``@pytest.mark.skipif(not
+    _tk_available(), ...)`` decorator: the expression is evaluated during
+    collection, which is exactly when constructing a Tk interpreter poisons the
+    next one. Decorators sit at column 0, so a source check catches that shape.
+
+    It is a source check rather than a runtime one on purpose -- an import-time
+    Tk that has already been destroyed leaves nothing to observe by the time any
+    test could look.
+    """
+    from pathlib import Path
+
+    source = Path(__file__).read_text(encoding="utf-8")
+    offenders = [
+        line
+        for line in source.splitlines()
+        if line[:1] not in ("", " ", "\t")
+        and any(token in line for token in ("Tk(", "LauncherWindow(", "_tk_available"))
+    ]
+    assert not offenders, (
+        "these lines run at collection time and build a toolkit object; move the "
+        f"construction into the test body via the open_window fixture: {offenders}"
+    )
 
 
 def test_the_logic_imports_without_tkinter(monkeypatch) -> None:

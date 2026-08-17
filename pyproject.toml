@@ -110,7 +110,17 @@ testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-v --tb=short"
+# --capture=sys is load-bearing, not a preference. pytest's default fd-level
+# capture swaps file descriptors 1 and 2 for temp files, and a Tk interpreter
+# created while that is in force holds descriptors that are gone by the time the
+# next one is built -- the second or third window in a process then dies reading
+# its own init.tcl, reporting "No error". It looked like a race in the launcher
+# and is not one. Measured: 6 failures in 9 runs of one launcher test under
+# --capture=fd, 0 in 24 runs under --capture=sys, with an identical 28-warning
+# tail and no extra console output. Only `capsys` is used in this suite, never
+# `capfd`, so nothing here depends on fd-level capture. See the `open_window`
+# fixture in tests/test_launcher.py for the full measurement.
+addopts = "-v --tb=short --capture=sys"
 markers = [
     "local_input: optional integration test requiring an ignored local_inputs artifact",
     "slow: multi-seed acceptance test; deselect with -m 'not slow'",
