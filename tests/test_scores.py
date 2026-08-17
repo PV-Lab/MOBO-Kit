@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 from mobo_kit.scores import (
+    AgreementCheck,
     CrossCheck,
     MeasurementInput,
     MeasurementSpec,
@@ -420,6 +421,252 @@ def test_a_single_cross_check_mapping_is_accepted() -> None:
 def test_a_malformed_measurement_block_is_refused(block, match) -> None:
     with pytest.raises(ValueError, match=match):
         measurement_spec_from_config({"name": "x", "measurement": block})
+
+
+# --------------------------------------------------------------------------- #
+# the v3 contract: `mean`, the two threshold transforms, and the agreement check
+# --------------------------------------------------------------------------- #
+
+
+def _v3_uniformity(**kwargs) -> MeasurementSpec:
+    return MeasurementSpec(
+        name="uniformity",
+        recipe="mean",
+        inputs=(
+            MeasurementInput("Coverage"),
+            MeasurementInput(
+                "Uniformity", "clamped_complement", clamp_above=1.0, clamp_to=0.99
+            ),
+            MeasurementInput("Phase purity"),
+        ),
+        **kwargs,
+    )
+
+
+def _v3_optoelectronic(**kwargs) -> MeasurementSpec:
+    return MeasurementSpec(
+        name="optoelectronic",
+        recipe="mean",
+        inputs=(
+            MeasurementInput("Voc raw", "capped_ratio", cap=1.4),
+            MeasurementInput("Normalized photoconductance"),
+        ),
+        **kwargs,
+    )
+
+
+def test_the_mean_recipe_averages_every_input() -> None:
+    frame = pd.DataFrame(
+        {"Coverage": [0.989], "Uniformity": [0.324584], "Phase purity": [0.9685]}
+    )
+    result = compute_measurements(frame, [_v3_uniformity()], sample_ids=[1])
+    # the workbook's own (L + O + P) / 3 for sample 1
+    assert result.values["uniformity"][0] == pytest.approx(0.8776386666666668, abs=1e-15)
+    assert result.inputs_used["uniformity"][0] == 3
+
+
+def test_mean_refuses_a_blank_where_mean_of_present_would_accept_one() -> None:
+    """The two recipes do the same arithmetic and differ only here, which is the
+    entire reason `mean` exists rather than reusing `mean_of_present`: a missing
+    Coverage is a hole in the row, not a film with fewer readings."""
+    frame = pd.DataFrame(
+        {"Coverage": [None], "Uniformity": [0.3], "Phase purity": [0.9]}
+    )
+    result = compute_measurements(frame, [_v3_uniformity()], sample_ids=[1])
+    assert "input_missing" in _codes(result, ScoreSeverity.ERROR)
+    assert math.isnan(result.values["uniformity"][0])
+
+
+@pytest.mark.parametrize(
+    "uniformity, expected_complement, note",
+    [
+        (1.658775, 0.010000000000000009, "sample 4 of the v3 workbook"),
+        (1.277, 0.010000000000000009, "sample 8 of the v3 workbook"),
+        (1.0000001, 0.010000000000000009, "just above the threshold"),
+        (1.0, 0.0, "EXACTLY 1.0 keeps its own value: the clamp is strict"),
+        (0.324584, 0.675416, "an ordinary reading is untouched"),
+        (0.0, 1.0, "the bottom of the range"),
+    ],
+)
+def test_the_uniformity_clamp_including_its_boundary(
+    uniformity, expected_complement, note
+) -> None:
+    frame = pd.DataFrame(
+        {"Coverage": [0.0], "Uniformity": [uniformity], "Phase purity": [0.0]}
+    )
+    result = compute_measurements(frame, [_v3_uniformity()], sample_ids=[1])
+    assert result.values["uniformity"][0] == pytest.approx(
+        expected_complement / 3.0, abs=1e-12
+    ), note
+
+
+def test_the_voc_cap_is_dormant_on_readings_below_it() -> None:
+    """Every observed reading is under 1.4, so the cap changes nothing today and
+    the recipe reproduces the sheet's uncapped Q / 1.4 exactly."""
+    frame = pd.DataFrame(
+        {"Voc raw": [1.02683981553478], "Normalized photoconductance": [0.763425]}
+    )
+    result = compute_measurements(frame, [_v3_optoelectronic()], sample_ids=[1])
+    assert result.values["optoelectronic"][0] == pytest.approx(
+        0.7484410055481358, abs=1e-15
+    )
+
+
+def test_the_voc_cap_binds_above_1_4_where_the_sheet_would_not() -> None:
+    """The declared divergence, exercised. The workbook has no ceiling, so this
+    row is where the two would part company -- and the cross-check is what would
+    say so on real data."""
+    frame = pd.DataFrame({"Voc raw": [2.8], "Normalized photoconductance": [0.0]})
+    result = compute_measurements(frame, [_v3_optoelectronic()], sample_ids=[1])
+    assert result.values["optoelectronic"][0] == pytest.approx(0.5)  # (1.0 + 0.0) / 2
+
+
+def test_normalized_photoconductance_passes_straight_through() -> None:
+    frame = pd.DataFrame({"Voc raw": [0.0], "Normalized photoconductance": [0.42]})
+    result = compute_measurements(frame, [_v3_optoelectronic()], sample_ids=[1])
+    assert result.values["optoelectronic"][0] == pytest.approx(0.21)
+
+
+@pytest.mark.parametrize(
+    "kwargs, match",
+    [
+        ({"transform": "clamped_complement", "clamp_above": 1.0}, "clamp_to"),
+        ({"transform": "clamped_complement", "clamp_to": 0.99}, "clamp_above"),
+        ({"transform": "capped_ratio"}, "cap"),
+        ({"transform": "capped_ratio", "cap": 0.0}, "positive"),
+        ({"transform": "identity", "cap": 1.4}, "ignores"),
+        ({"transform": "complement", "clamp_to": 0.99}, "ignores"),
+    ],
+)
+def test_a_threshold_that_would_do_nothing_is_an_error(kwargs, match) -> None:
+    """A clamp everyone believes is configured while nothing applies it is the
+    same class of failure as the three finite-but-wrong numbers this project has
+    already found."""
+    with pytest.raises(ValueError, match=match):
+        MeasurementInput("x", **kwargs)
+
+
+def test_an_unknown_key_on_a_measurement_input_is_refused() -> None:
+    with pytest.raises(ValueError, match="unknown key"):
+        measurement_spec_from_config(
+            {
+                "name": "x",
+                "measurement": {
+                    "recipe": "mean",
+                    "inputs": [{"column": "a", "clamp_at": 1.0}],
+                },
+            }
+        )
+
+
+def test_thresholds_survive_the_config_round_trip() -> None:
+    spec = measurement_spec_from_config(
+        {
+            "name": "optoelectronic",
+            "measurement": {
+                "recipe": "mean",
+                "inputs": [
+                    {"column": "Voc ", "transform": "capped_ratio", "cap": 1.4},
+                    {
+                        "column": " Uniformity",
+                        "transform": "clamped_complement",
+                        "clamp_above": 1.0,
+                        "clamp_to": 0.99,
+                    },
+                ],
+            },
+        }
+    )
+    # column names are stripped on BOTH sides: the v3 sheet's headers carry
+    # trailing spaces ('PL - Implied Voc (Max) Raw ') and the config quotes them
+    # verbatim, so resolution must not depend on which spelling was written
+    assert [item.column for item in spec.inputs] == ["Voc", "Uniformity"]
+    assert spec.inputs[0].cap == 1.4
+    assert spec.inputs[1].clamp_above == 1.0
+    assert spec.inputs[1].clamp_to == 0.99
+
+
+def _agreement(raw_values, normalized_values, **kwargs):
+    spec = MeasurementSpec(
+        name="optoelectronic",
+        recipe="mean",
+        inputs=(MeasurementInput("Normalized photoconductance"),),
+        agreement_check=AgreementCheck(
+            raw="Photoconductance (Max)",
+            normalized="Normalized photoconductance",
+            **kwargs,
+        ),
+    )
+    frame = pd.DataFrame(
+        {
+            "Photoconductance (Max)": raw_values,
+            "Normalized photoconductance": normalized_values,
+        }
+    )
+    return compute_measurements(
+        frame, [spec], sample_ids=list(range(1, len(raw_values) + 1))
+    )
+
+
+def test_a_normalization_that_ranks_backwards_warns() -> None:
+    """The live case: the strongest film carries the lowest normalised value."""
+    result = _agreement([1e-8, 1e-7, 1e-6], [0.9, 0.5, 0.01])
+    assert "agreement_not_monotonic" in _codes(result, ScoreSeverity.WARNING)
+    message = next(
+        f.message for f in result.findings if f.code == "agreement_not_monotonic"
+    )
+    assert "-1.0000" in message
+    assert "sample 3" in message  # names the highest-raw film, not just the rho
+
+
+def test_a_normalization_that_preserves_order_is_only_a_note() -> None:
+    result = _agreement([1e-8, 1e-7, 1e-6], [0.01, 0.5, 0.9])
+    assert "agreement_monotonic" in _codes(result, ScoreSeverity.NOTE)
+    assert not _codes(result, ScoreSeverity.WARNING)
+
+
+def test_the_agreement_check_never_blocks_a_round() -> None:
+    """It is a finding by design: which column the model trains on is the group's
+    decision, and a diagnostic that refused to run would make it by refusing."""
+    result = _agreement([1e-8, 1e-7, 1e-6], [0.9, 0.5, 0.01])
+    assert not result.has_errors
+    assert result.values["optoelectronic"].notna().all()
+
+
+def test_the_agreement_check_says_so_when_it_cannot_run() -> None:
+    spec = MeasurementSpec(
+        name="optoelectronic",
+        recipe="mean",
+        inputs=(MeasurementInput("Normalized photoconductance"),),
+        agreement_check=AgreementCheck(
+            raw="Photoconductance (Max)", normalized="Normalized photoconductance"
+        ),
+    )
+    frame = pd.DataFrame({"Normalized photoconductance": [0.1, 0.2, 0.3]})
+    result = compute_measurements(frame, [spec], sample_ids=[1, 2, 3])
+    assert "agreement_check_absent" in _codes(result, ScoreSeverity.NOTE)
+
+    too_few = _agreement([1e-8, 1e-7], [0.9, 0.5])
+    assert "agreement_check_too_few_rows" in _codes(too_few, ScoreSeverity.NOTE)
+
+    constant = _agreement([1e-7, 1e-7, 1e-7], [0.9, 0.5, 0.01])
+    assert "agreement_check_undefined" in _codes(constant, ScoreSeverity.NOTE)
+
+
+def test_the_agreement_raw_column_is_offered_but_never_required() -> None:
+    """A row without it simply does not join the rank comparison; the objective is
+    computed from the normalised column either way."""
+    spec = MeasurementSpec(
+        name="optoelectronic",
+        recipe="mean",
+        inputs=(MeasurementInput("Normalized photoconductance"),),
+        agreement_check=AgreementCheck(
+            raw="Photoconductance (Max)", normalized="Normalized photoconductance"
+        ),
+    )
+    required, optional = entry_columns([spec])
+    assert "Photoconductance (Max)" not in required
+    assert "Photoconductance (Max)" in optional
 
 
 def test_findings_frame_is_exportable() -> None:

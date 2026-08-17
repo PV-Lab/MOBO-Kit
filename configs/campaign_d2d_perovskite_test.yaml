@@ -1,0 +1,445 @@
+# D2D test campaign - FA0.9Cs0.1PbI3 slot-die/spin, SECOND dataset.
+#
+# Rounds: R0 (15 measured, complete) -> R1 UCB-HVI (5 conditions) -> R2 qLogNEHVI (3).
+# Each proposed condition is run in triplicate; the three films share a
+# replicate_group and are aggregated to one condition-level observation before
+# the next round trains on them.
+#
+# WHY THIS IS A NEW FILE rather than an edit to campaign_d2d_perovskite.yaml.
+# Two of the three objectives are computed differently here -- uniformity is now
+# the MEAN of its three terms rather than their product, and optoelectronic is the
+# mean of two normalised terms rather than log10 of a product. Utility space is
+# what hypervolume is measured in, so an objective that keeps its name while
+# changing its construction makes every cross-round and cross-campaign number
+# incomparable while every plot still renders. The old config stays as the
+# historical record with status: archived, and this one carries a new
+# contract_version. Nothing about the first campaign's numbers transfers.
+#
+# The workbook is local_inputs/Summary Table Test.xlsx (gitignored), whose column
+# layout differs from the first campaign's throughout.
+campaign:
+  name: D2D_FA0.9Cs0.1PbI3_test
+  status: active
+  schema_version: d2d-campaign-v3
+  workbook_profile: d2d_summary_test_v3
+
+# Ten inputs, columns B..K of Sheet1, in this order.
+#
+# TWO GRIDS CHANGED from the first campaign, both forced by the measured rows.
+# Everything else is carried over unchanged and every observed value lands on it.
+inputs:
+  - name: speed_1
+    unit: rpm
+    start: 1000
+    stop: 6000
+    step: 500
+  - name: time_1
+    unit: s
+    start: 5
+    stop: 50
+    step: 5
+  - name: speed_2
+    unit: rpm
+    start: 0
+    stop: 5000
+    step: 500
+  # CHANGED: was 10..60. Sample 2 is a one-step film -- speed_2 = 0 and
+  # time_2 = 0 -- so 0 has to be on the grid or a real recipe is off-grid.
+  #
+  # Reaching 0 with step 5 also reaches 5, which the first campaign's grid
+  # excluded and which no film has ever run. Rather than widen the design space in
+  # silence, the hole is declared as a `nonzero_minimum` constraint below. An
+  # explicit value list would express {0} U {10..60} directly, but `lhs` asserts
+  # that every design grid is uniformly spaced, so an irregular grid would need
+  # changes to two modules this campaign deliberately leaves alone.
+  - name: time_2
+    unit: s
+    start: 0
+    stop: 60
+    step: 5
+  - name: precur_conc
+    unit: M
+    start: 1.00
+    stop: 2.00
+    step: 0.05
+  - name: precur_vol
+    unit: uL
+    start: 40
+    stop: 200
+    step: 10
+  - name: anneal_temp
+    unit: C
+    start: 100
+    stop: 185
+    step: 5
+  - name: anneal_time
+    unit: min
+    start: 10
+    stop: 60
+    step: 5
+  - name: anti_vol
+    unit: uL
+    start: 100
+    stop: 200
+    step: 5
+  # CHANGED: was step 2, giving 9/11/13/.../25. Sample 1 runs anti_time = 12,
+  # which that grid cannot hold; the first campaign carried it as a declared
+  # off-grid exception, excluded from pool bookkeeping. Step 1 makes it an
+  # ordinary observation. The axis goes from 9 values to 17.
+  - name: anti_time
+    unit: s
+    start: 9
+    stop: 25
+    step: 1
+
+# All three utilities are maximised after transformation. `transform` maps a
+# model output to utility; the two differ only for thickness.
+#
+# `measurement` is what the GP trains on: a recipe plus the raw measurement
+# columns it consumes, computed in Python. `model_source_column` names the stored
+# workbook cell, which is a label and a cross-check target, never an input.
+#
+# POLICY FOR THIS WORKBOOK, per the group: the stored score columns are
+# authoritative and the recompute is the cross-check. Every recipe below
+# reproduces its stored column exactly on all 15 rows -- worst disagreement
+# 2.3e-13, on thickness, which is floating-point noise -- so the two are the same
+# number today. A disagreement is therefore a WARNING finding and not a block:
+# the computed value is what the model uses, and a human decides what the
+# divergence means.
+objectives:
+  contract_version: d2d-objectives-v3-test
+  # Scales are FIXED for the whole campaign and must never be re-derived from
+  # observed data. If a scale tracks the data, utility space moves between rounds
+  # and hypervolume stops being comparable - the progress plot silently becomes
+  # meaningless. Widen a range deliberately and bump contract_version; never let
+  # it follow the measurements.
+  scaling_mode: fixed_affine
+  specs:
+  - name: uniformity
+    model_source_column: "Uniformity score (Avg (Coverage + (1-Uniformity) + Phase purity))"
+    transform: affine
+    goal: maximize
+    # AB = (L + O + P) / 3, the mean of Coverage, 1 - clamped Uniformity and
+    # Phase purity. The first campaign multiplied these instead.
+    #
+    # Computed from `Uniformity` (M), never from the workbook's clamped copy (N)
+    # or its complement (O). N is a pasted literal on every row and O is a formula
+    # on fourteen rows and a literal on the fifteenth, so both are exactly the kind
+    # of cell that stops updating when the measurement behind it is edited. Taking
+    # the reading and clamping it here means the cross-check against AB -- which is
+    # built from O -- fires if that ever happens.
+    #
+    # The clamp is strictly above 1.0, matching the sheet: readings of 1.659
+    # (sample 4) and 1.277 (sample 8) become 0.99, and an exact 1.0 would keep its
+    # own value. Uniformity above 1 is out of range for a fraction; the clamp
+    # records that the film was bad without letting one reading drive the mean
+    # negative.
+    measurement:
+      recipe: mean
+      inputs:
+        - {column: "Coverage"}
+        - {column: "Uniformity", transform: clamped_complement, clamp_above: 1.0, clamp_to: 0.99}
+        - {column: "Phase purity"}
+      # AB is a live formula, so it agrees to floating point. Measured: 0.0 on all
+      # 15 rows.
+      cross_check:
+        - {column: "Uniformity score (Avg (Coverage + (1-Uniformity) + Phase purity))", atol: 1.0e-9}
+    # The mean of three terms each in [0, 1] is itself in [0, 1] by construction,
+    # so these anchors are the objective's natural range and not a guess about the
+    # data. Observed span on the 15 rows is 0.365 to 0.878.
+    lower_anchor: 0.0
+    upper_anchor: 1.0
+    # MEASURED ON THESE ROWS, 2026-08-17, not inherited. The first campaign's
+    # "no learnable signal" verdict was about a different construction (the
+    # product) on a different set of films, so it could not transfer -- but the
+    # answer came out the same: plain GP LOO R2 -0.6447 against a null of -0.1480.
+    # Well below. R1 is exploration-dominated for this objective by design.
+    #
+    # Reproduce with:
+    #   python scripts/intake_new_data.py --workbook "local_inputs/Summary Table Test.xlsx"
+    signal_status: exploration_only
+
+  - name: optoelectronic
+    model_source_column: "Optoelectronic score (Avg normalized (Voc + Photocondiuctivity)"
+    transform: affine
+    goal: maximize
+    # AC = (R + T) / 2, the mean of normalised Voc and normalised photoconductance.
+    # The first campaign used log10(Voc * photoconductance), a different quantity
+    # on a different scale.
+    #
+    # R = Q / 1.4 in the sheet, with NO ceiling. `capped_ratio` adds one, so this
+    # computes min(Q, 1.4) / 1.4. THAT IS A DELIBERATE DIVERGENCE from the
+    # workbook and it is dormant today: the largest observed reading is 1.135, so
+    # the cap never binds and the cross-check agrees exactly. The day a film
+    # exceeds 1.4 V the two will disagree and the cross-check will say so, which is
+    # the intended behaviour -- the group asked for Voc to be clamped at 1.4, and a
+    # clamp that only exists in Python has to announce itself.
+    #
+    # T is taken as provided. Nothing in the workbook derives it, so there is no
+    # recipe to reproduce and no cross-check to write; see agreement_check.
+    measurement:
+      recipe: mean
+      inputs:
+        - {column: "PL - Implied Voc (Max) Raw ", transform: capped_ratio, cap: 1.4}
+        - {column: "Normalized photoconductance "}
+      cross_check:
+        - {column: "Optoelectronic score (Avg normalized (Voc + Photocondiuctivity)", atol: 1.0e-9}
+      # THE NORMALISATION IS KNOWN TO BE WRONG AND THIS IS HOW IT STAYS VISIBLE.
+      # `Normalized photoconductance` does not rank like the raw photoconductance
+      # it claims to summarise: Spearman is -0.5484 (p = 0.0343) on the 15 rows.
+      # The strongest film (8.81e-07) normalises to 0.010, the lowest value in the
+      # column, and three films at low raw photoconductance sit at exactly 1.000.
+      # So half of this objective currently rewards the opposite of what it names.
+      #
+      # It is a finding, never a gate. The group knows and the formula is coming;
+      # until it does, every R1 review carries the notice below and this axis is
+      # provisional. Closing it is one recipe edit plus one intake run.
+      agreement_check:
+        raw: "Photoconductance (Max)"
+        normalized: "Normalized photoconductance "
+        min_spearman: 0.0
+    # Both terms are normalised to [0, 1], so their mean is too. Observed span on
+    # the 15 rows is 0.373 to 0.905.
+    lower_anchor: 0.0
+    upper_anchor: 1.0
+    # MEASURED ON THESE ROWS, 2026-08-17. Plain GP LOO R2 -0.5842 against a null
+    # of -0.1480: this objective carries no learnable signal either, and like the
+    # first campaign's optoelectronic it sits BELOW the null, which means the ten
+    # inputs are doing damage rather than merely diluting.
+    #
+    # THE MEAN FUNCTION WAS DELETED, and that was the designed outcome rather than
+    # a setback. The first campaign carried `mean_function: linear anneal_temp`
+    # here, worth -0.342 -> +0.355 on ITS score. On this one it makes the fit
+    # WORSE: -0.5842 -> -0.6977, a swing of -0.1135. The target changed underneath
+    # it -- this objective is now (min(Voc, 1.4)/1.4 + T)/2 rather than
+    # log10(Voc * photoconductance) -- so the old evidence was never about this
+    # quantity. Do not reinstate it without a fresh intake verdict.
+    #
+    # The prime suspect is the agreement_check above. Half of this objective is a
+    # normalisation that ranks BACKWARDS against its own raw measurement, and no
+    # model can learn a column that does not track what it claims to summarise.
+    # Re-run the intake once the group supplies the real formula; a mean function
+    # may well earn its place then, and this verdict is about the column as it
+    # stands rather than about anneal_temp.
+    signal_status: exploration_only
+
+  - name: thickness
+    # trains on nanometres, NOT on the workbook thickness score
+    model_source_column: "Thickness (avg)"
+    transform: gaussian_target
+    goal: target
+    target: 650.0
+    # the workbook writes EXP(-(((Z-650)/250)^2)), which has no factor of 1/2;
+    # in the exp(-0.5*((T-c)/sigma)^2) convention used here that is 250/sqrt(2)
+    sigma: 176.7766952966369
+    equivalent_workbook_formula: "EXP(-(((Z-650)/250)^2))"
+    # MEASURED ON THESE ROWS, 2026-08-17. The one objective with real signal, and
+    # it is much stronger than in the first campaign: plain GP LOO R2 +0.5227
+    # against a null of -0.1480, where the first campaign's plain thickness GP
+    # managed +0.116. These films are far more internally consistent, which is the
+    # likely reason.
+    signal_status: learnable
+    # Unchanged from the first campaign in every respect except the tolerance.
+    # The score is still a peaked Gaussian on a 650 nm target and still folds the
+    # range 2-to-1 -- films at 372 nm and 953 nm score alike from opposite sides of
+    # the peak -- so the model still trains on nanometres and the Gaussian is
+    # applied to the posterior. Observed range is 371.9 to 1310.9 nm, straddling
+    # the target as before.
+    #
+    # Eleven rows carry three readings and four carry four, so `mean_of_present`
+    # is what the data needs; requiring all four would reject two thirds of the
+    # campaign. Blank means not measured, never zero.
+    #
+    # "T anom" holds readings the operator judged anomalous (samples 4, 8, 11 and
+    # 12). They never enter the mean -- the sheet's own AVERAGE(U:X) excludes the
+    # column too -- and their presence is reported so the exclusion is visible.
+    #
+    # TOLERANCE TIGHTENED, 0.5 -> 1e-9. The first campaign's `Thickness (avg)` was
+    # ROUND(mean(T1..T4)), a rounded literal that could legitimately differ by half
+    # a nanometre. This sheet's Z is a live unrounded AVERAGE, so anything above
+    # floating-point noise is a real disagreement. Measured worst case on the 15
+    # rows: 2.3e-13.
+    #
+    # spread_warning_ratio fires on sample 1 alone (readings 584.4, 418.5, 692.0,
+    # 624.6 -- a 47% spread around their mean). These films are far more internally
+    # consistent than the first campaign's: pooled within-film sd of log(T) is
+    # 0.0798 here against 0.244 there.
+    measurement:
+      recipe: mean_of_present
+      inputs:
+        - {column: "T1"}
+        - {column: "T2"}
+        - {column: "T3"}
+        - {column: "T4"}
+      excluded:
+        - {column: "T anom"}
+      cross_check:
+        - {column: "Thickness (avg)", atol: 1.0e-9}
+      spread_warning_ratio: 0.25
+    # response: log makes the model output lognormal, so the utility expectation
+    # must use Gauss-Hermite quadrature, not the Gaussian closed form.
+    #
+    # The three replicate films of one condition are averaged in LOG SPACE, for the
+    # same reason train_Yvar is pooled there: `response: log` means the GP trains
+    # on log(T), so the geometric mean is the arithmetic mean in the space the
+    # model actually works in.
+    replicate_aggregate: mean_of_log
+    # KEPT, but on a weaker footing than in the first campaign, and the difference
+    # is worth stating. Intake 2026-08-17: plain +0.5227, structured +0.6630, swing
+    # +0.1403 against a resolution floor of 0.236 -- so the mean function is
+    # INCONCLUSIVE here, not demonstrated. Both fits clear the null decisively,
+    # which is what keeps the block: the intake's delete rule fires when a mean
+    # function fails to beat the null, and this one does not fail.
+    #
+    # What has changed is that the plain GP now learns thickness on its own
+    # (+0.5227, against +0.116 in the first campaign), so the trend has much less
+    # left to explain. The block stays because its two predictors were fixed from
+    # spin-coating physics before any fitting, not because the swing proves
+    # anything at N=15. Do not quote +0.1403 as evidence; it is inside the floor.
+    mean_function:
+      response: log
+      features:
+        - column: speed_1
+          transform: log
+        - column: precur_conc
+          transform: log
+
+# Reference point in UTILITY space, after the transforms above. All three
+# objectives now live natively in [0, 1], so the axes are more comparable than in
+# the first campaign, not less; the reference is unchanged.
+reference_point_utility: [-0.01, -0.01, -0.01]
+
+rounds:
+  r1:
+    method: ucb_hvi
+    batch_size: 5
+    replicates_per_condition: 3
+    beta: 4.0
+    candidate_pool_size: 32768
+    posterior_samples: 256
+    # thickness utility is a nonlinear function of the model output, so utility
+    # moments must come from posterior samples, not from moments of the mean
+    moment_method: monte_carlo
+  r2:
+    method: qlognehvi
+    batch_size: 3
+    replicates_per_condition: 3
+    candidate_pool_size: 32768
+    mc_samples: 128
+    sequential_pending: true
+
+# FIRST REAL CONSTRAINTS IN THIS PROJECT. The first campaign's list was empty by
+# decision; these are process facts about the recipe, supplied by the group.
+#
+# Enforcement lives in the campaign layer, never in acquisition. The candidate
+# pool is filtered immediately after generation, before anything is scored, and
+# `validate_batch` re-checks the proposed batch by an independent route. The
+# acquisition modules are untouched. `discrete_refinement` is NOT constraint-aware
+# and is not wired into a round; its docstring says so.
+#
+# Watch `constraint_pool_survival_rate` in the round diagnostics. The sampler
+# draws until it has the requested pool size, so a mis-specified constraint
+# produces a normal-looking pool drawn from a sliver of the space, and the
+# survival rate is the only place that shows.
+constraints:
+  # A second spin stage either happens or it does not. 0 rpm for 30 s and 3500 rpm
+  # for 0 s are both contradictions; both zero is a one-step film, which sample 2
+  # actually is. Stated as an iff because that is what keeps the one-step recipe
+  # reachable - a plain lower bound on either column would delete it.
+  - zero_coupled: [speed_2, time_2]
+    name: second_stage_all_or_nothing
+
+  # The antisolvent has to land while the substrate is still spinning, so equality
+  # is already too late. Strict, deliberately.
+  - sum_upper_strict: {lhs: anti_time, rhs: [time_1, time_2]}
+    name: antisolvent_lands_while_spinning
+
+  # See the time_2 grid note above: step 5 from 0 reaches 5, which no film has run
+  # and which the first campaign's grid excluded. This keeps the hole declared
+  # rather than silently filling it.
+  - nonzero_minimum: {column: time_2, minimum: 10}
+    name: second_stage_runs_at_least_10s
+
+# What the batch-review artifact interrogates and states. Campaign knowledge, so
+# it lives here rather than in batch_review.py.
+#
+# Starts clean: the first campaign's probes and its R1 withdrawal note were facts
+# about that dataset and do not travel.
+review:
+  probes: []
+
+  notes:
+    - >
+      THE OPTOELECTRONIC AXIS IS PROVISIONAL. Half of it is
+      `Normalized photoconductance`, a column supplied ready-normalised with no
+      derivation in the workbook, and it does not rank like the raw
+      `Photoconductance (Max)` it summarises: Spearman -0.5484, p = 0.0343 over
+      the 15 R0 rows. The strongest film measured (8.81e-07) carries the lowest
+      normalised value in the column (0.010), and three films at low raw
+      photoconductance sit at exactly 1.000. So this objective currently rewards
+      weaker photoconductance, and any condition proposed partly on optoelectronic
+      grounds inherits that. The group is supplying the intended formula; until it
+      lands, read this axis as unresolved rather than as a result. Closing it is
+      one recipe edit plus one intake run.
+    - >
+      TWO OF THE THREE OBJECTIVES ARE EXPLORATION-ONLY. Measured on these 15 rows
+      by scripts/intake_new_data.py on 2026-08-17, against a leave-one-out null of
+      -0.1480: uniformity -0.6447 and optoelectronic -0.5842, both well below it,
+      so neither model has learned anything and neither predicted utility should be
+      read as one. Only thickness carries signal (+0.5227 plain, +0.6630 with its
+      mean function). A batch is therefore being chosen on one informative axis and
+      two uninformative ones, which is a legitimate exploration round but is not
+      the same thing as a three-objective optimisation, and the review should say
+      so rather than let the predicted numbers imply otherwise.
+    - >
+      The optoelectronic mean function was DELETED on the intake verdict. The first
+      campaign carried a linear anneal_temp trend there, worth -0.342 to +0.355 on
+      its own score; on this one it makes the fit worse, -0.5842 to -0.6977. The
+      objective was redefined underneath it, so the old evidence was never about
+      this quantity. It is not to be reinstated without a fresh verdict.
+
+local_penalization:
+  distance_metric: normalized_euclidean
+  dimension_weights: null
+  radius: 0.25
+  min_batch_distance: 0.15
+  min_observed_distance: 0.0
+
+model:
+  variant: dim_scaled_prior
+  # R0 has no film replicates. Once R1 triplicates land, pool their
+  # within-condition variance (5 conditions x 2 dof = 10 dof) and pass it as
+  # train_Yvar by setting this to `replicate_pooled`.
+  #
+  # Pool thickness variance in LOG SPACE, not in nanometres: `response: log`
+  # above means the GP trains on log(T), so train_Yvar must be the variance of
+  # log(T). A variance in nm^2 would be wrong by a factor of T^2 - roughly 1.4e5
+  # at 372 nm and 1.7e6 at 1311 nm, so not even a constant rescaling.
+  observation_noise: fit_from_marginal_likelihood
+
+  replicate_variance:
+    # TWO DIFFERENT VARIANCES. Do not substitute one for the other.
+    #
+    # BETWEEN-FILM is what train_Yvar needs and is only measurable once R1 ships
+    # triplicates. WITHIN-FILM is the scatter of the 3-4 thickness points across
+    # one film, available today, and contains NO run-to-run variation - so it is a
+    # FLOOR, not an estimate. If pooled between-film variance ever lands below it,
+    # films would be more reproducible than points on a single film.
+    #
+    # RECOMPUTED ON THIS WORKBOOK: 0.006374 on log(T), 37 dof, against 0.0593 on
+    # the first campaign's films. These films are about ten times more internally
+    # consistent, and inheriting the old constant would have set the floor an order
+    # of magnitude too high - it would have called a perfectly ordinary pooled
+    # variance a pooling mistake.
+    sanity_floor:
+      thickness: 0.006374
+    # Film count assumed for rows that have no replicates - the R0 rows. 1 means
+    # their observation carries the full between-film variance rather than a third
+    # of it.
+    rows_without_replicates: 1
+
+reproducibility:
+  seed: 73
+  record_git_commit: true
+  record_environment_versions: true
+  record_resolved_config_hash: true

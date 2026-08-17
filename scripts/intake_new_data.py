@@ -40,11 +40,13 @@ import torch
 
 from mobo_kit.campaign import (
     assert_scaling_is_campaign_fixed,
+    build_design_from_config,
     build_objective_transform,
     load_campaign_config,
     normalise_inputs,
     objective_names,
 )
+from mobo_kit.constraints import constraint_violations, constraints_from_config
 from mobo_kit.model_validation import (
     DIM_SCALED_PRIOR,
     SIGNAL_COLLAPSE_STAGE,
@@ -123,7 +125,10 @@ def _loo_r2(X_norm, X_phys, y, mean_spec, names, lowers, uppers, seed=73):
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workbook", required=True)
-    parser.add_argument("--config", default="configs/campaign_d2d_perovskite.yaml")
+    # Defaults to the ACTIVE campaign. The first campaign's config is archived, and
+    # defaulting to it would quietly audit new rows against a retired contract --
+    # different recipes, different anchors, different grids.
+    parser.add_argument("--config", default="configs/campaign_d2d_perovskite_test.yaml")
     parser.add_argument(
         "--skip-model",
         action="store_true",
@@ -135,7 +140,13 @@ def main() -> int:
     names = list(objective_names(config))
     print("=" * 78)
     print(f"INTAKE: {Path(args.workbook).name}")
+    print(f"CONFIG: {Path(args.config).name}  "
+          f"({config.get('objectives', {}).get('contract_version')})")
     print("=" * 78)
+    if str(config.get("campaign", {}).get("status")) == "archived":
+        print("\n   NOTE: this config is archived. Its recipes, anchors and grids")
+        print("   describe a retired contract, so every number below is about that")
+        print("   contract rather than about the active campaign.")
 
     # ---------------------------------------------------------------- audit --
     contents = read_campaign_workbook(args.workbook, config)
@@ -182,20 +193,66 @@ def main() -> int:
         else:
             print(f"   {spec.name:<16} target {spec.target:g} vs data [{low:.4g}, {high:.4g}]")
 
+    # ------------------------------------------------------ design and rules --
+    print("\n3. DESIGN AND CONSTRAINTS")
+    design = build_design_from_config(dict(config))
+    X_observed = contents.inputs.to_numpy(float)
+    off_grid = [
+        (contents.sample_ids[row], name, float(value))
+        for column, name in enumerate(design.names)
+        for row, value in enumerate(X_observed[:, column])
+        if not np.any(
+            np.isclose(design.var_array[column], value, rtol=0.0, atol=1e-9)
+        )
+    ]
+    if off_grid:
+        # An off-grid observation stays in the GP and in the distance references,
+        # but it cannot take part in grid-index bookkeeping. Worth knowing which,
+        # because the usual cause is a grid that no longer describes the process.
+        print(f"   on-grid check          {len(off_grid)} observed value(s) OFF GRID")
+        for sample, name, value in off_grid:
+            print(f"        sample {sample}: {name} = {value:g}")
+    else:
+        print(f"   on-grid check          PASS, all {n} rows land on the declared grid")
+
+    constraints = constraints_from_config(dict(config), design)
+    if not constraints:
+        print("   constraints            none declared")
+    else:
+        for item in constraints:
+            print(f"   constraint             {item.name}: {item.description}")
+        violations = constraint_violations(X_observed, design, constraints)
+        broken = [
+            (contents.sample_ids[row], names_broken)
+            for row, names_broken in enumerate(violations)
+            if names_broken
+        ]
+        if broken:
+            # History is history: a row measured before a rule existed is not an
+            # error and must not block anything. It is worth saying, though -- a
+            # constraint that rejects a film the group actually ran is much more
+            # likely to be wrong than the film is.
+            print(f"   observed rows          {len(broken)} of {n} break a constraint")
+            for sample, names_broken in broken:
+                print(f"        sample {sample}: {names_broken}")
+            print("        -> not an error. Check the RULE before the films.")
+        else:
+            print(f"   observed rows          PASS, all {n} satisfy every constraint")
+
     # ---------------------------------------------------------------- floors --
     null = null_loo_r2(n)
     floor = resolution_sd(n)
-    print(f"\n3. FLOORS AT N={n}")
+    print(f"\n4. FLOORS AT N={n}")
     print(f"   null LOO R2            {null:+.4f}   (was {null_loo_r2(15):+.4f} at N=15)")
     print(f"   resolution sd          +-{floor:.4f}  (estimated by sqrt(15/N) from "
           f"{RESOLUTION_SD_AT_15}; re-run the bootstrap if a call is close)")
 
     if args.skip_model:
-        print("\n4. MODEL  skipped (--skip-model)")
+        print("\n5. MODEL  skipped (--skip-model)")
         return 0
 
     # ----------------------------------------------------------------- model --
-    print(f"\n4. PER-OBJECTIVE VERDICT  (a mean function must beat plain by > {floor:.3f})")
+    print(f"\n5. PER-OBJECTIVE VERDICT  (a mean function must beat plain by > {floor:.3f})")
     design_names = [item["name"] for item in config["inputs"]]
     lowers = np.array([float(i["start"]) for i in config["inputs"]])
     uppers = np.array([float(i["stop"]) for i in config["inputs"]])

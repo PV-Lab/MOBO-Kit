@@ -1,4 +1,16 @@
-"""Deterministic coordinate refinement on an exact finite design grid."""
+"""Deterministic coordinate refinement on an exact finite design grid.
+
+**NOT constraint-aware, and currently not wired into a round.** This moves a
+selected point one coordinate at a time across the declared grid, which is
+exactly the operation that can walk a valid recipe into an invalid one -- lowering
+``time_2`` to 0 while ``speed_2`` stays at 3500, say. Campaign constraints are
+enforced by filtering the candidate pool before any acquisition sees it
+(``campaign.run_r1_ucb``), and a local search that leaves the pool escapes that
+filter entirely. If this is ever wired into a round, it must take the same
+``row_constraints`` the pool sampler takes and reject off-constraint neighbours;
+``campaign.validate_batch`` would catch the result, but only after the search had
+already spent its budget walking somewhere it was never allowed to go.
+"""
 
 from __future__ import annotations
 

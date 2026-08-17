@@ -11,7 +11,7 @@
 # score itself is a 2-to-1 folded transform that destroys learnable signal.
 campaign:
   name: D2D_FA0.9Cs0.1PbI3
-  status: active
+  status: archived   # superseded by campaign_d2d_perovskite_test.yaml, 2026-08-17
   schema_version: d2d-campaign-v2
   workbook_profile: d2d_summary_v3_scores
 

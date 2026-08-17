@@ -20,18 +20,43 @@ configuration; the column names and tolerances are in config because those are
 what change when the dataset changes:
 
 ===================  =========================================================
-``product``          ``Coverage * (1 - Uniformity) * Phase purity``      -> Z
-``log10_product``    ``log10(Implied Voc) + log10(Photoconductance)``    -> AA, R
-``mean_of_present``  mean of whichever of ``T1..T4`` were measured       -> X
+``product``          ``Coverage * (1 - Uniformity) * Phase purity``      v2 only
+``log10_product``    ``log10(Implied Voc) + log10(Photoconductance)``    v2 only
+``mean``             the mean of every input, all of them required       v3
+``mean_of_present``  mean of whichever of ``T1..T4`` were measured       both
 ===================  =========================================================
+
+Two objective contracts are live at once and the recipes serve both.  The first
+campaign (``d2d-objectives-v2-nm-thickness``) multiplied its uniformity terms and
+took a log10 product for optoelectronic; the second
+(``d2d-objectives-v3-test``) averages instead, on a workbook whose columns moved.
+Recipes are never edited in place for a new dataset -- a redefined objective with
+an unchanged name makes every cross-round hypervolume incomparable while every
+plot still renders -- so a new shape arrives as a new recipe plus a new
+``contract_version``.
 
 ``log10_product`` sums two logarithms rather than logging the product, which is
 algebraically identical and cannot overflow on the way there.
 
-``mean_of_present`` needs at least one reading; the other two recipes need all of
-theirs.  **Blank means not measured, never zero.**  Nine of the fifteen R0 rows
-carry two thickness readings, three carry three and three carry four, so a recipe
-that demanded all four would reject the entire campaign.
+``mean_of_present`` needs at least one reading; every other recipe needs all of
+theirs.  **Blank means not measured, never zero.**  Thickness rows carry three or
+four readings depending on the film, so a recipe that demanded all four would
+reject the campaign; a blank ``Coverage``, by contrast, is a missing measurement
+and ``mean`` refuses it.
+
+Two input transforms carry a threshold, and both come from the v3 workbook:
+
+* ``clamped_complement`` reproduces its ``Uniformity (clamped to 0.99)`` column,
+  which pins a reading above 1 to 0.99 before taking the complement.  Two of the
+  fifteen rows are clamped (uniformity 1.659 and 1.277).  The clamp is strictly
+  above the threshold, so an exact 1.0 keeps its own value and yields a
+  complement of exactly 0.
+* ``capped_ratio`` reproduces ``Normalized Voc (to 1.4V)``.  **The cap is a
+  deliberate divergence from the sheet**, which divides by 1.4 with no ceiling.
+  It is dormant on the current data -- the largest observed reading is 1.135 --
+  so the cross-check below agrees exactly today and would start warning the day a
+  reading exceeds 1.4.  That is the intended behaviour: the divergence announces
+  itself rather than being discovered later.
 
 Cross-check tolerances differ by what the stored cell is, and the audited numbers
 are the reason:
@@ -55,6 +80,7 @@ import numpy as np
 import pandas as pd
 
 __all__ = [
+    "AgreementCheck",
     "CrossCheck",
     "MeasurementInput",
     "MeasurementResult",
@@ -173,6 +199,12 @@ RECIPES: Mapping[str, _Recipe] = {
             True,
             "the sum of the base-10 logarithms, i.e. log10 of the product",
         ),
+        # Same arithmetic as `mean_of_present`, opposite policy on a blank cell.
+        # `mean` is for terms that were all supposed to be measured -- a missing
+        # Coverage is a hole in the row, and averaging the other two would quietly
+        # answer a different question. `mean_of_present` is for repeated readings
+        # of one quantity, where three instead of four is a normal film.
+        _Recipe("mean", _mean_of_present, True, "the mean of every input"),
         _Recipe(
             "mean_of_present",
             _mean_of_present,
@@ -195,24 +227,92 @@ class MeasurementInput:
     ``complement`` exists because the workbook records ``Uniformity`` and the
     score wants ``1 - Uniformity``.  The workbook also stores that complement in
     its own column, but as a pasted literal -- so it is computed here and the
-    stored column is only ever a cross-check.
+    stored column is only ever a cross-check.  The same is true of the v3
+    workbook's clamped copy of the reading.
+
+    The two parameterised transforms take their thresholds from config rather
+    than hard-coding them, because a clamp at 0.99 and a cap at 1.4 V are
+    campaign decisions the group can revise, not physics.
     """
 
     column: str
     transform: str = "identity"
+    #: ``clamped_complement``: readings STRICTLY above this are replaced.
+    clamp_above: float | None = None
+    #: ``clamped_complement``: what they are replaced with.
+    clamp_to: float | None = None
+    #: ``capped_ratio``: the ceiling, which is also the divisor.
+    cap: float | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.column, str) or not self.column.strip():
             raise ValueError("A measurement input needs a non-empty column name.")
         object.__setattr__(self, "column", self.column.strip())
-        if self.transform not in ("identity", "complement"):
+        if self.transform not in _TRANSFORM_PARAMETERS:
             raise ValueError(
                 f"Unsupported measurement transform {self.transform!r}; "
-                "expected 'identity' or 'complement'."
+                f"expected one of {sorted(_TRANSFORM_PARAMETERS)}."
             )
 
+        def _required(field: str, *, positive: bool = False) -> float:
+            raw = getattr(self, field)
+            if raw is None:
+                raise ValueError(
+                    f"Transform {self.transform!r} on column {self.column!r} needs "
+                    f"{field!r}."
+                )
+            if isinstance(raw, (bool, np.bool_)) or not isinstance(raw, Real):
+                raise ValueError(
+                    f"{field!r} on column {self.column!r} must be a number; "
+                    f"got {raw!r}."
+                )
+            number = float(raw)
+            if not math.isfinite(number):
+                raise ValueError(f"{field!r} on column {self.column!r} must be finite.")
+            if positive and number <= 0:
+                raise ValueError(
+                    f"{field!r} on column {self.column!r} must be positive; "
+                    f"got {number!r}."
+                )
+            object.__setattr__(self, field, number)
+            return number
+
+        unused = [
+            field
+            for field in ("clamp_above", "clamp_to", "cap")
+            if getattr(self, field) is not None
+            and field not in _TRANSFORM_PARAMETERS[self.transform]
+        ]
+        if unused:
+            # A threshold that silently does nothing is how a clamp gets believed
+            # to be active when it is not.
+            raise ValueError(
+                f"Transform {self.transform!r} on column {self.column!r} ignores "
+                f"{unused}; remove them or change the transform."
+            )
+        for field in _TRANSFORM_PARAMETERS[self.transform]:
+            _required(field, positive=field == "cap")
+
     def evaluate(self, value: float) -> float:
-        return value if self.transform == "identity" else 1.0 - value
+        if self.transform == "identity":
+            return value
+        if self.transform == "complement":
+            return 1.0 - value
+        if self.transform == "clamped_complement":
+            # strictly above, so an exact clamp_above keeps its own value
+            clamped = self.clamp_to if value > self.clamp_above else value
+            return 1.0 - float(clamped)
+        return min(value, self.cap) / self.cap
+
+
+#: Which thresholds each transform consumes. Declared once so an unused threshold
+#: is an error rather than a silent no-op.
+_TRANSFORM_PARAMETERS: Mapping[str, tuple[str, ...]] = {
+    "identity": (),
+    "complement": (),
+    "clamped_complement": ("clamp_above", "clamp_to"),
+    "capped_ratio": ("cap",),
+}
 
 
 @dataclass(frozen=True)
@@ -241,6 +341,51 @@ class CrossCheck:
 
 
 @dataclass(frozen=True)
+class AgreementCheck:
+    """Does a supplied normalised column still rank like the raw one it summarises?
+
+    Some columns arrive already normalised, with the derivation living outside the
+    workbook -- ``Normalized photoconductance`` is one, and nothing in the sheet
+    computes it.  A recipe can only take such a column on trust, which means a
+    normalisation that has come loose from its raw measurement is invisible: every
+    value is in range, every row computes, and the objective is simply about
+    something else than it says.
+
+    Rank agreement is the check that needs no formula.  Whatever the mapping is,
+    a normalisation of a raw quantity must at least preserve its order, so
+    Spearman between the two is expected to be strongly positive.  This reports it
+    and warns below ``min_spearman``.
+
+    It is a FINDING, never a gate: which column the model trains on is a decision
+    for the group, and a diagnostic that blocks a round would make that decision
+    by refusing to run.
+    """
+
+    raw: str
+    normalized: str
+    min_spearman: float = 0.0
+
+    def __post_init__(self) -> None:
+        for field in ("raw", "normalized"):
+            value = getattr(self, field)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"An agreement check needs a non-empty {field!r}.")
+            object.__setattr__(self, field, value.strip())
+        if self.raw == self.normalized:
+            raise ValueError(
+                f"An agreement check compares two different columns; got "
+                f"{self.raw!r} twice."
+            )
+        threshold = self.min_spearman
+        if isinstance(threshold, (bool, np.bool_)) or not isinstance(threshold, Real):
+            raise ValueError("min_spearman must be a number.")
+        threshold = float(threshold)
+        if not math.isfinite(threshold) or not -1.0 <= threshold <= 1.0:
+            raise ValueError("min_spearman must be finite and within [-1, 1].")
+        object.__setattr__(self, "min_spearman", threshold)
+
+
+@dataclass(frozen=True)
 class MeasurementSpec:
     """How one objective's model input is computed and checked."""
 
@@ -248,6 +393,8 @@ class MeasurementSpec:
     recipe: str
     inputs: tuple[MeasurementInput, ...]
     cross_checks: tuple[CrossCheck, ...] = ()
+    #: Rank agreement between a supplied normalised column and its raw source.
+    agreement_check: "AgreementCheck | None" = None
     #: Columns holding readings the operator judged anomalous.  They never enter
     #: the recipe; their presence is recorded so an exclusion is visible rather
     #: than silent.
@@ -296,9 +443,17 @@ class MeasurementSpec:
 
     @property
     def optional_columns(self) -> tuple[str, ...]:
+        # The agreement check's raw column is offered but never required: a row
+        # without it simply does not contribute to the rank comparison, and the
+        # objective is computed from the normalised column either way.
+        agreement = (self.agreement_check.raw,) if self.agreement_check else ()
         if self.recipe_impl.requires_all:
-            return tuple(self.excluded)
-        return tuple(item.column for item in self.inputs) + tuple(self.excluded)
+            return tuple(self.excluded) + agreement
+        return (
+            tuple(item.column for item in self.inputs)
+            + tuple(self.excluded)
+            + agreement
+        )
 
 
 def measurement_spec_from_config(entry: Mapping[str, Any]) -> MeasurementSpec | None:
@@ -321,13 +476,26 @@ def measurement_spec_from_config(entry: Mapping[str, Any]) -> MeasurementSpec | 
     ):
         raise ValueError("measurement.inputs must be a non-empty list.")
     inputs = []
+    _INPUT_KEYS = {"column", "transform", "clamp_above", "clamp_to", "cap"}
     for item in raw_inputs:
         if isinstance(item, str):
             inputs.append(MeasurementInput(item))
         elif isinstance(item, Mapping):
+            # A misspelt threshold would otherwise be dropped in silence, leaving
+            # a clamp everyone believes is configured and nothing applying it.
+            unknown = sorted(set(item) - _INPUT_KEYS)
+            if unknown:
+                raise ValueError(
+                    f"Measurement input {item.get('column')!r} has unknown key(s) "
+                    f"{unknown}; expected {sorted(_INPUT_KEYS)}."
+                )
             inputs.append(
                 MeasurementInput(
-                    str(item["column"]), str(item.get("transform", "identity"))
+                    str(item["column"]),
+                    str(item.get("transform", "identity")),
+                    clamp_above=item.get("clamp_above"),
+                    clamp_to=item.get("clamp_to"),
+                    cap=item.get("cap"),
                 )
             )
         else:
@@ -358,12 +526,26 @@ def measurement_spec_from_config(entry: Mapping[str, Any]) -> MeasurementSpec | 
         for item in raw_excluded
     )
 
+    raw_agreement = block.get("agreement_check")
+    if raw_agreement is None:
+        agreement = None
+    elif isinstance(raw_agreement, Mapping):
+        threshold = raw_agreement.get("min_spearman")
+        agreement = AgreementCheck(
+            raw=str(raw_agreement["raw"]),
+            normalized=str(raw_agreement["normalized"]),
+            min_spearman=0.0 if threshold is None else float(threshold),
+        )
+    else:
+        raise ValueError("measurement.agreement_check must be a mapping.")
+
     ratio = block.get("spread_warning_ratio")
     return MeasurementSpec(
         name=str(entry.get("name", block.get("name", "<unnamed>"))),
         recipe=str(block["recipe"]),
         inputs=tuple(inputs),
         cross_checks=tuple(checks),
+        agreement_check=agreement,
         excluded=excluded,
         spread_warning_ratio=None if ratio is None else float(ratio),
     )
@@ -485,6 +667,32 @@ def _cell(frame: pd.DataFrame, column: str, position: int) -> Any:
     return frame[column].to_numpy(dtype=object)[position]
 
 
+def _with_stripped_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    """Compare column names with surrounding whitespace removed, on both sides.
+
+    :class:`MeasurementInput` and :class:`CrossCheck` strip the names they are
+    given, so a config may quote a header verbatim -- and the v3 sheet has two
+    that end in a space, ``'PL - Implied Voc (Max) Raw '`` and ``'Normalized
+    photoconductance '``.  ``workbook_io`` strips the sheet side when it builds
+    its header index, but a caller who reads the sheet with pandas directly does
+    not, and would then be told the column is missing.  It fails closed rather
+    than silently, but "missing" is the wrong answer to give about a column that
+    is right there.
+
+    Renaming is skipped entirely when it would merge two distinct labels, because
+    quietly dropping one of them would be worse than the confusion this avoids.
+    """
+    labels = list(frame.columns)
+    stripped = [name.strip() if isinstance(name, str) else name for name in labels]
+    if stripped == labels:
+        return frame
+    if len(set(map(str, stripped))) != len(stripped):
+        return frame
+    renamed = frame.copy(deep=False)
+    renamed.columns = stripped
+    return renamed
+
+
 def _absent_required_columns(
     frame: pd.DataFrame, specs: Sequence[MeasurementSpec]
 ) -> tuple[str, ...]:
@@ -501,6 +709,134 @@ def _absent_required_columns(
             if column not in frame.columns and column not in absent:
                 absent.append(column)
     return tuple(absent)
+
+
+def _agreement_findings(
+    frame: pd.DataFrame,
+    spec: MeasurementSpec,
+    sample_ids: Sequence[Any],
+) -> list[ScoreFinding]:
+    """Rank-compare a supplied normalised column against the raw one it summarises.
+
+    One finding for the whole column, not one per row -- the question is about the
+    mapping, so ``row_position`` is -1 and ``sample_id`` is None.  The message
+    names the highest-raw film explicitly, because "Spearman is negative" is a
+    statistic and "the strongest film scores lowest" is the thing a reviewer can
+    act on.
+    """
+    check = spec.agreement_check
+    assert check is not None  # caller checks; keeps the type narrow
+
+    def finding(severity: ScoreSeverity, code: str, message: str) -> ScoreFinding:
+        return ScoreFinding(
+            severity=severity,
+            code=code,
+            objective=spec.name,
+            row_position=-1,
+            sample_id=None,
+            message=message,
+            column=check.normalized,
+        )
+
+    missing = [c for c in (check.raw, check.normalized) if c not in frame.columns]
+    if missing:
+        return [
+            finding(
+                ScoreSeverity.NOTE,
+                "agreement_check_absent",
+                f"{missing} not in this sheet, so {check.normalized!r} cannot be "
+                f"checked against {check.raw!r}.",
+            )
+        ]
+
+    pairs: list[tuple[float, float, Any]] = []
+    for position in range(len(frame)):
+        try:
+            raw = _number(_cell(frame, check.raw, position), column=check.raw)
+            normalized = _number(
+                _cell(frame, check.normalized, position), column=check.normalized
+            )
+        except _NotNumeric:
+            continue
+        if raw is None or normalized is None:
+            continue
+        pairs.append((raw, normalized, sample_ids[position]))
+
+    if len(pairs) < 3:
+        return [
+            finding(
+                ScoreSeverity.NOTE,
+                "agreement_check_too_few_rows",
+                f"only {len(pairs)} row(s) have both {check.raw!r} and "
+                f"{check.normalized!r}; a rank comparison needs at least 3.",
+            )
+        ]
+
+    raw_values = [item[0] for item in pairs]
+    normalized_values = [item[1] for item in pairs]
+    # Checked before calling scipy rather than by testing the result for NaN: a
+    # constant column makes `spearmanr` emit a ConstantInputWarning, and this
+    # suite keeps its warning tail fixed so that a NEW warning means something.
+    constant = [
+        name
+        for name, series in (
+            (check.raw, raw_values),
+            (check.normalized, normalized_values),
+        )
+        if len(set(series)) == 1
+    ]
+    if constant:
+        return [
+            finding(
+                ScoreSeverity.NOTE,
+                "agreement_check_undefined",
+                f"rank correlation is undefined over {len(pairs)} rows because "
+                f"{constant} is constant.",
+            )
+        ]
+
+    from scipy.stats import spearmanr
+
+    result = spearmanr(raw_values, normalized_values)
+    rho = float(result.statistic)
+    p_value = float(result.pvalue)
+    if not math.isfinite(rho):  # pragma: no cover - constant input is caught above
+        return [
+            finding(
+                ScoreSeverity.NOTE,
+                "agreement_check_undefined",
+                f"rank correlation over {len(pairs)} rows is not a finite number.",
+            )
+        ]
+
+    strongest = max(pairs, key=lambda item: item[0])
+    weakest = min(pairs, key=lambda item: item[0])
+    detail = (
+        f"Spearman({check.raw!r}, {check.normalized!r}) = {rho:+.4f} "
+        f"(p = {p_value:.4f}) over {len(pairs)} rows. The highest raw reading "
+        f"({strongest[0]:.4g}, sample {strongest[2]}) normalises to "
+        f"{strongest[1]:.4g}; the lowest ({weakest[0]:.4g}, sample {weakest[2]}) "
+        f"normalises to {weakest[1]:.4g}."
+    )
+    if rho < check.min_spearman:
+        return [
+            finding(
+                ScoreSeverity.WARNING,
+                "agreement_not_monotonic",
+                f"{check.normalized!r} does not rank like {check.raw!r}, so this "
+                f"objective is provisional until the group supplies the "
+                f"normalisation. {detail} Expected at least "
+                f"{check.min_spearman:+.4f}. The computed value still stands -- "
+                f"this is a finding, not a gate.",
+            )
+        ]
+    return [
+        finding(
+            ScoreSeverity.NOTE,
+            "agreement_monotonic",
+            f"{check.normalized!r} ranks like {check.raw!r}. {detail}",
+        )
+    ]
 
 
 def compute_measurements(
@@ -525,6 +861,7 @@ def compute_measurements(
     specs = tuple(specs)
     if not specs:
         raise ValueError("At least one MeasurementSpec is required.")
+    frame = _with_stripped_columns(frame)
     absent = _absent_required_columns(frame, specs)
     if absent:
         raise ValueError(
@@ -710,6 +1047,9 @@ def compute_measurements(
             values[spec.name].append(value)
             counts[spec.name].append(len(used))
 
+        if spec.agreement_check is not None:
+            findings.extend(_agreement_findings(frame, spec, ids))
+
     index = frame.index
     return MeasurementResult(
         values=pd.DataFrame(
@@ -733,6 +1073,7 @@ def row_completeness(
     it wrong either blocks a finished round or advances on a half-filled sheet.
     """
     specs = tuple(specs)
+    frame = _with_stripped_columns(frame)
     complete = pd.Series(True, index=frame.index)
     for spec in specs:
         requires_all = spec.recipe_impl.requires_all

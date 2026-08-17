@@ -38,7 +38,11 @@ import torch
 
 from .batch_selection import LocalPenalizationConfig
 from .candidate_pool import CandidatePool, sample_discrete_candidate_pool
-from .constraints import constraints_from_config
+from .constraints import (
+    RowConstraint,
+    constraint_violations,
+    constraints_from_config,
+)
 from .design import Design, build_design_from_config
 from .lhs import lhs_dataframe_optimized
 from botorch.models.model_list_gp_regression import ModelListGP
@@ -366,13 +370,22 @@ def validate_batch(
     *,
     expected_count: int,
     min_pairwise_distance: float = 0.0,
+    constraints: Sequence[RowConstraint] | None = None,
 ) -> dict[str, Any]:
     """Refuse to issue a batch that is malformed.
 
-    Five checks, all of which catch real bugs: the batch is the requested size,
+    Six checks, all of which catch real bugs: the batch is the requested size,
     its rows are distinct, every value sits exactly on the declared grid, every
-    value is finite and in bounds, and the rows are at least
-    ``min_pairwise_distance`` apart in normalised space.
+    value is finite and in bounds, the rows are at least
+    ``min_pairwise_distance`` apart in normalised space, and every row satisfies
+    the campaign's declared constraints.
+
+    The constraint check is deliberately redundant.  The candidate pool is already
+    filtered before any acquisition scores it, so a violating condition cannot be
+    proposed by that route -- which is exactly why the check belongs here too: the
+    pool filter is the mechanism, and this is the second, independent route to the
+    same answer.  This project has now been bitten three times by a quantity that
+    nothing recomputed.
 
     This replaces the previous debug/production approval tiers.  Whether a batch
     is approved for fabrication is a human decision recorded outside the code;
@@ -436,6 +449,24 @@ def validate_batch(
 
     boundary = (np.isclose(norm, 0.0, atol=1e-9)) | (np.isclose(norm, 1.0, atol=1e-9))
     report["boundary_coords_per_condition"] = boundary.sum(axis=1).tolist()
+
+    violations = constraint_violations(values, design, constraints)
+    report["constraints_declared"] = [
+        getattr(item, "description", getattr(item, "name", "constraint"))
+        for item in (constraints or ())
+    ]
+    report["constraint_violations_per_condition"] = violations
+    broken = [
+        f"condition {position + 1} breaks {names}"
+        for position, names in enumerate(violations)
+        if names
+    ]
+    if broken:
+        raise BatchValidityError(
+            "Proposed conditions must satisfy the campaign constraints; "
+            + "; ".join(broken)
+        )
+    report["constraints_satisfied"] = True
     return report
 
 
@@ -489,7 +520,9 @@ def run_r0_lhs(
     replicates_per = int(
         _round_settings(config, "r1").get("replicates_per_condition", 1)
     )
-    report = validate_batch(conditions, design, expected_count=n)
+    report = validate_batch(
+        conditions, design, expected_count=n, constraints=constraints or None
+    )
     return RoundResult(
         round_name="R0",
         conditions=conditions,
@@ -663,6 +696,51 @@ def _on_grid_mask(design: Design, X_phys: np.ndarray) -> np.ndarray:
     return mask
 
 
+def _constraint_diagnostics(
+    constraints: Sequence[RowConstraint],
+    pool: CandidatePool,
+    design: Design,
+    observed_X_phys: np.ndarray,
+) -> dict[str, Any]:
+    """What the constraints did, in numbers a reviewer can check.
+
+    Three things, none of which is a gate:
+
+    ``constraint_pool_survival_rate`` is the share of drawn grid tuples the
+    constraints accepted.  A mis-specified constraint that guts the pool still
+    produces a pool of exactly the requested size -- the sampler simply draws
+    longer -- so the batch looks entirely normal while being chosen from a
+    fraction of the space.  A rate near zero is the signal, and without this it is
+    invisible.
+
+    ``observed_rows_violating_constraints`` soft-checks the measured history.
+    History is history: a row that predates a rule is not an error and must not
+    block a round.  It is worth SAYING, though, because a constraint that rejects
+    a film the group actually ran is much more likely to be wrong than the film is.
+    """
+    accepted = int(pool.size)
+    rejected = int(pool.rejected_constraint)
+    considered = accepted + rejected
+    observed_violations = constraint_violations(
+        observed_X_phys, design, constraints or None
+    )
+    return {
+        "constraints_declared": [
+            getattr(item, "description", getattr(item, "name", "constraint"))
+            for item in (constraints or ())
+        ],
+        "constraint_pool_rejected": rejected,
+        "constraint_pool_survival_rate": (
+            float(accepted) / considered if considered else 1.0
+        ),
+        "observed_rows_violating_constraints": [
+            {"row": position, "constraints": names}
+            for position, names in enumerate(observed_violations)
+            if names
+        ],
+    }
+
+
 def run_r1_ucb(
     config: Mapping[str, Any],
     observed_X_phys: np.ndarray,
@@ -699,12 +777,13 @@ def run_r1_ucb(
     )
 
     on_grid = _on_grid_mask(design, observed_X_phys)
+    constraints = constraints_from_config(dict(config), design)
     pool = sample_discrete_candidate_pool(
         design,
         int(settings.get("candidate_pool_size", 32768)),
         seed=resolved_seed,
         observed_phys=np.asarray(observed_X_phys, dtype=float)[on_grid],
-        row_constraints=constraints_from_config(dict(config), design) or None,
+        row_constraints=constraints or None,
     )
 
     # The HVI baseline is the utility of what has already been measured, so it must
@@ -740,6 +819,7 @@ def run_r1_ucb(
         design,
         expected_count=q,
         min_pairwise_distance=penalization.min_batch_distance,
+        constraints=constraints or None,
     )
     replicates_per = int(settings.get("replicates_per_condition", 1))
     return RoundResult(
@@ -767,6 +847,9 @@ def run_r1_ucb(
             ),
             "off_grid_observations_excluded_from_pool_bookkeeping": int(
                 (~on_grid).sum()
+            ),
+            **_constraint_diagnostics(
+                constraints, pool, design, np.asarray(observed_X_phys, dtype=float)
             ),
             "model_fit_warnings": list(fit_warnings),
             # unsurfaced on purpose: everything the fit raised, for debugging a
@@ -812,12 +895,13 @@ def run_r2_qlognehvi(
     )
 
     on_grid = _on_grid_mask(design, observed_X_phys)
+    constraints = constraints_from_config(dict(config), design)
     pool = sample_discrete_candidate_pool(
         design,
         int(settings.get("candidate_pool_size", 32768)),
         seed=resolved_seed,
         observed_phys=np.asarray(observed_X_phys, dtype=float)[on_grid],
-        row_constraints=constraints_from_config(dict(config), design) or None,
+        row_constraints=constraints or None,
     )
 
     from .objectives import ConfiguredMCMultiOutputObjective
@@ -842,6 +926,7 @@ def run_r2_qlognehvi(
         design,
         expected_count=q,
         min_pairwise_distance=penalization.min_batch_distance,
+        constraints=constraints or None,
     )
     replicates_per = int(settings.get("replicates_per_condition", 1))
     return RoundResult(
@@ -857,6 +942,9 @@ def run_r2_qlognehvi(
             "objective_contract": transform.version,
             "off_grid_observations_excluded_from_pool_bookkeeping": int(
                 (~on_grid).sum()
+            ),
+            **_constraint_diagnostics(
+                constraints, pool, design, np.asarray(observed_X_phys, dtype=float)
             ),
             "model_fit_warnings": list(fit_warnings),
             # unsurfaced on purpose: everything the fit raised, for debugging a

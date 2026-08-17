@@ -29,11 +29,19 @@ def config() -> dict:
 
 
 def test_campaign_config_is_runnable(config: dict) -> None:
-    """The canonical config must no longer be a baseline-only stub."""
-    assert config["campaign"]["status"] == "active"
+    """The first campaign's config must no longer be a baseline-only stub.
+
+    It is `archived` since 2026-08-17 -- superseded by
+    campaign_d2d_perovskite_test.yaml on the second dataset -- and it stays
+    complete and loadable rather than being deleted, because every number in
+    GP_MODEL_DECISION.md is about this contract. Archived means "do not run new
+    rounds against it", not "let it rot".
+    """
+    assert config["campaign"]["status"] == "archived"
     assert len(config["inputs"]) == 10
-    assert config["objectives"]["contract_version"]
+    assert config["objectives"]["contract_version"] == "d2d-objectives-v2-nm-thickness"
     assert len(config["objectives"]["specs"]) == 3
+    # this campaign declared no constraints, deliberately; the second one has three
     assert config["constraints"] == []
 
 
