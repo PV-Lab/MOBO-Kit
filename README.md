@@ -36,13 +36,13 @@ reproducibility can be measured.
 from mobo_kit.campaign import load_campaign_config, run_r0_lhs, run_r1_ucb, run_r2_qlognehvi
 from mobo_kit.workbook_io import read_campaign_workbook
 
-config = load_campaign_config("configs/campaign_d2d_perovskite.yaml")
+config = load_campaign_config("configs/campaign_d2d_perovskite_test.yaml")
 
 r0 = run_r0_lhs(config, n=15)                        # space-filling, no model
 
-# objective values are computed from the raw measurement columns, not read from
-# the workbook's stored score cells -- three of those are pasted literals
-contents = read_campaign_workbook("local_inputs/Summary Table.xlsx", config)
+# objective values are computed from the raw measurement columns and the stored
+# score cells become a cross-check -- several of those are pasted literals
+contents = read_campaign_workbook("local_inputs/Summary Table Test.xlsx", config)
 X_phys = contents.inputs.to_numpy(float)
 Y_model = contents.model_values.to_numpy(float)      # in objective order
 assert contents.errors == ()                         # fail closed before fitting
@@ -156,14 +156,15 @@ src/mobo_kit/
 
   research_qnehvi.py      qNEHVI as a research-only R2 variant, NOT the campaign
 
-configs/   campaign_d2d_perovskite.yaml (the live campaign) + two examples
+configs/   campaign_d2d_perovskite_test.yaml (the live campaign),
+           campaign_d2d_perovskite.yaml (archived, first campaign) + two examples
 docs/      HANDOFF.md, CAMPAIGN_STATUS.md, GP_MODEL_DECISION.md,
            R1_BATCH_WITHDRAWAL.md, ROUND_SIM_DELTA.md, ROUND_SIM_MANIFEST.md,
            SHAP_SUMMARY.md
 scripts/   diagnostics, report figures, intake_new_data.py,
            dtlz2_parameter_sweep.py, plot_round_simulation.py,
            plot_shap_attribution.py
-tests/     478 tests
+tests/     558 tests
 launch_mobo_kit.bat, launch_mobo_kit.command   double-click entry points
 ```
 
@@ -222,9 +223,23 @@ hypervolume stops being comparable across them.
 All of these are campaign configuration, not code. Tuning them does not require
 touching the algorithm.
 
-The ten input grids hold 11/10/11/11/21/17/18/11/21/9 values, so the full
-Cartesian product is 177,816,994,740 recipes. It must never be materialised —
+The ten input grids hold 11/10/11/13/21/17/18/11/21/17 values, so the full
+Cartesian product is 396,945,008,460 recipes. It must never be materialised —
 that is what the sampled candidate pool and the discrete local search are for.
+
+**Constraints are config too, and the live campaign declares three.** They are
+enforced by filtering the candidate pool before any acquisition scores it, and
+re-checked independently when the batch is validated:
+
+```yaml
+constraints:
+  # a second spin stage either happens or it does not
+  - zero_coupled: [speed_2, time_2]
+  # the antisolvent has to land while the substrate is still spinning
+  - sum_upper_strict: {lhs: anti_time, rhs: [time_1, time_2]}
+  # and if it happens, it runs for at least 10 s
+  - nonzero_minimum: {column: time_2, minimum: 10}
+```
 
 ## History
 

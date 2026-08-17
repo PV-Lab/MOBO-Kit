@@ -3,6 +3,18 @@
 Measured 2026-07-28 on the corrected `Summary Table.xlsx` (15 R0 observations,
 10 inputs). Reproduce with `python scripts/gp_diagnostic.py`.
 
+> **This document is about the FIRST campaign's objective contract,
+> `d2d-objectives-v2-nm-thickness`, and is kept as its record.** A second campaign
+> opened on 2026-08-17 with a new contract (`d2d-objectives-v3-test`) on a new
+> workbook: uniformity became a mean rather than a product and optoelectronic a
+> mean of normalised terms rather than a log10 product, so **no LOO R², signal
+> verdict or mean function below transfers to it** — they are about quantities
+> that were redefined. Its numbers come from
+> `python scripts/intake_new_data.py --workbook "local_inputs/Summary Table Test.xlsx"`
+> and are recorded in `CAMPAIGN_STATUS.md`. What does carry over is the *method*:
+> the three floors, the null, the refit-inside-every-fold rule, and the two
+> degenerate fitting modes.
+
 ## Which instrument produced these numbers
 
 **Every LOO R² in this document was measured by `scripts/validate_structured_means.py`

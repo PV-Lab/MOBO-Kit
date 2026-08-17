@@ -1,7 +1,23 @@
 # Handoff
 
 Written 2026-07-30, at the end of the session that closed the numbered issue list.
-Read this first in a new session.
+Updated 2026-08-17. Read this first in a new session.
+
+## Where to start today
+
+**A second campaign is live on a second dataset.**
+`configs/campaign_d2d_perovskite_test.yaml`, contract `d2d-objectives-v3-test`,
+against `local_inputs/Summary Table Test.xlsx`. Two objectives are computed
+differently, two grids moved, and this project's first real constraints are
+active. `configs/campaign_d2d_perovskite.yaml` is **archived** — complete and
+loadable, because every number in `GP_MODEL_DECISION.md` is about that contract,
+but not something to run new rounds against. Start at the "Second campaign" section
+at the top of `CAMPAIGN_STATUS.md`.
+
+**Nothing since 2026-07-31 has been pushed, by decision.** `colin` is four commits
+ahead of `origin/colin`: the SHAP attribution work, the beta x radius boxplot
+sweep, the tkinter capture fix, and the second campaign. The group is keeping this
+local for now, so do not push without asking.
 
 ## Read these, in this order (~20 minutes)
 
@@ -20,10 +36,20 @@ Then verify the state yourself:
 pytest -q
 ```
 
-Expect **478 passed, 0 failed** (~110 s). If that holds, everything below is true.
-Two tests open a real tkinter window and drive it; they skip themselves without a
-display. Nothing in the suite needs the private workbook — the tests that would use
-it skip when it is absent.
+Expect **558 passed, 0 failed, 28 warnings** (~135 s). If that holds, everything
+below is true. Six tests open a real tkinter window and drive it; they skip
+themselves when Tk will not start. Nothing in the suite needs a private workbook —
+the tests that would use one skip when it is absent.
+
+**`--capture=sys` in `addopts` is load-bearing, not a preference.** pytest's
+default fd-level capture swaps file descriptors 1 and 2, and a Tk interpreter
+built while that is in force holds descriptors that are gone by the time the next
+one is built — so the second or third launcher window in a process dies reading
+its own `init.tcl` and reports `No error`. It read as a race in the launcher's
+stale-reply handling for a while and is neither a race nor a launcher defect.
+Measured: 6 failures in 9 runs of one launcher test under `--capture=fd`, none
+under `--capture=sys`. Only `capsys` is used in this suite, never `capfd`. The
+`open_window` fixture in `tests/test_launcher.py` carries the full account.
 
 ## Where the project stands
 

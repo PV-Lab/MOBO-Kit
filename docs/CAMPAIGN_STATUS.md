@@ -3,6 +3,112 @@
 Snapshot for collaborators. The full loop runs: R0 LHS -> R1 UCB-HVI (5) ->
 R2 qLogNEHVI (3), three replicate films per condition, 23 distinct conditions.
 
+## Second campaign (test data), from 2026-08-17 — READ THIS FIRST
+
+**A second dataset arrived and it runs a different objective contract.** Two of
+the three objectives are computed differently, the workbook's columns moved, two
+grids changed, and this project's first real constraints are active. Everything
+below this section describes the FIRST campaign unless it says otherwise, and its
+numbers are about that contract.
+
+| | first campaign | second campaign |
+|---|---|---|
+| config | `configs/campaign_d2d_perovskite.yaml` (**archived**) | `configs/campaign_d2d_perovskite_test.yaml` |
+| contract | `d2d-objectives-v2-nm-thickness` | `d2d-objectives-v3-test` |
+| workbook | `local_inputs/Summary Table.xlsx` | `local_inputs/Summary Table Test.xlsx` |
+| uniformity | `Coverage * (1-Uniformity) * Phase purity` | `mean(Coverage, 1-clamp(Uniformity), Phase purity)` |
+| optoelectronic | `log10(Voc * Photoconductance)` | `mean(min(Voc,1.4)/1.4, Normalized photoconductance)` |
+| thickness | mean of `T1..T4`, nm | unchanged |
+| constraints | none, deliberately | three, active |
+
+The old config is archived rather than deleted, and stays complete and loadable:
+every number in `GP_MODEL_DECISION.md` is about that contract. Archived means "do
+not run new rounds against it".
+
+**Why a new file and not an edit.** Utility space is what hypervolume is measured
+in. An objective that keeps its name while changing its construction makes every
+cross-campaign number incomparable while every plot still renders — which is the
+failure mode the `contract_version` key exists to prevent.
+
+**All three recipes reproduce the stored score columns**, worst disagreement
+2.3e-13 across all 15 rows. Per the group, for this workbook the stored scores are
+authoritative and the recompute is the cross-check, so a disagreement is a warning
+finding rather than a block.
+
+### What the second dataset supports
+
+`scripts/intake_new_data.py`, 2026-08-17, exact leave-one-out, null −0.1480 at
+N=15, resolution floor ±0.236:
+
+| objective | plain GP | with mean function | verdict |
+|---|---:|---:|---|
+| uniformity | **−0.6447** | — | below the null, **exploration only** |
+| optoelectronic | **−0.5842** | −0.6977 | below the null, **exploration only**, mean function **deleted** |
+| thickness | **+0.5227** | **+0.6630** | **learnable**; the swing is inside the floor |
+
+**Two of the three axes carry no signal.** A batch is therefore chosen on one
+informative axis and two uninformative ones. That is a legitimate exploration
+round, but it is not a three-objective optimisation, and the review must say so
+rather than let the predicted numbers imply otherwise.
+
+**The optoelectronic mean function was deleted, and that is the designed
+outcome.** The first campaign's linear `anneal_temp` trend was worth −0.342 →
++0.355 on its own score; here it makes the fit *worse*, −0.5842 → −0.6977. The
+target was redefined underneath it, so the old evidence was never about this
+quantity. Do not reinstate it from the archived config without a fresh verdict.
+Issue 10 is the prime suspect for why the objective is unlearnable at all.
+
+**Thickness is on better footing than before but its mean function is on worse.**
+The plain GP now reaches +0.5227 where the first campaign's managed +0.116, so the
+trend has much less left to explain: the +0.1403 swing is inside the ±0.236 floor
+and is *inconclusive*, not demonstrated. The block stays because its two
+predictors were fixed from spin-coating physics before any fitting and because it
+clears the null either way — not because the swing proves anything. **Do not quote
++0.1403 as evidence.**
+
+### The two grid edits
+
+Both forced by the measured rows; everything else carries over unchanged, and all
+15 rows land on the declared grid.
+
+* **`time_2` now starts at 0** (was 10). Sample 2 is a one-step film — `speed_2`
+  and `time_2` both zero — so 0 has to be on the grid or a real recipe is
+  off-grid. Reaching 0 with step 5 also reaches 5, which the first campaign's grid
+  excluded and no film has run, so the hole is declared as a `nonzero_minimum`
+  constraint rather than filled in silence.
+* **`anti_time` now steps by 1** (was 2), 9..25. Sample 1 runs `anti_time = 12`,
+  which the old grid could not hold; the first campaign carried it as a declared
+  off-grid exception excluded from pool bookkeeping. The axis goes from 9 values
+  to 17.
+
+An explicit value list would express `{0} ∪ {10..60}` directly and avoid the
+`nonzero_minimum` workaround, but `lhs` asserts that every design grid is
+uniformly spaced, so it would need changes to `design.py` and `lhs.py`. **Worth
+raising with the group:** whether a 5 s second spin should ever be allowed, and
+whether `anti_time` wants step 1 or an explicit list.
+
+### The constraints
+
+Declared in the new config, enforced by filtering the candidate pool before any
+acquisition sees it, and re-checked independently by `validate_batch`. The
+acquisition modules are byte-identical. `discrete_refinement` is **not**
+constraint-aware and is not wired into a round; its docstring says so.
+
+| name | rule | why |
+|---|---|---|
+| `second_stage_all_or_nothing` | `speed_2` and `time_2` both zero or both nonzero | a stage at 0 rpm for 30 s is a contradiction; both zero is a one-step film, which sample 2 is |
+| `antisolvent_lands_while_spinning` | `anti_time < time_1 + time_2`, strictly | dropping at exactly the end is already too late |
+| `second_stage_runs_at_least_10s` | `time_2` is 0 or ≥ 10 | the declared hole in the arithmetic grid, above |
+
+All 15 measured rows satisfy all three. Observed rows are soft-checked only —
+history is history, and a constraint that rejects a film the group actually ran is
+far more likely to be wrong than the film is.
+
+**Watch `constraint_pool_survival_rate`** in the round diagnostics. The sampler
+draws until it has the requested pool size, so a mis-specified constraint produces
+a normal-looking pool drawn from a sliver of the space, and the survival rate is
+the only place that shows.
+
 ## Running a round
 
 ```python
@@ -560,9 +666,53 @@ rediscovered and re-argued. Status is stated at the top of each.
    `test_dtlz2_acceptance.py` now also runs with a log-link objective, so every
    end-to-end pass exercises both link types the campaign uses.
 
-**Nothing on this list is now blocked on code.** What remains is a human reading
-the reissued batch (issue 4), the R1 triplicates arriving (issue 7), and a
-decision about whether an `anneal_temp` floor belongs in `constraints:`.
+10. **OPEN, second campaign. `Normalized photoconductance` does not rank like the
+    photoconductance it summarises, and it is half of the optoelectronic
+    objective.** Nothing in the workbook derives that column — it arrives already
+    normalised, from outside — so a recipe can only take it on trust, and a
+    normalisation that has come loose from its measurement is invisible: every
+    value is in range, every row computes, and the objective is simply about
+    something other than it says.
+
+    Rank agreement is the check that needs no formula. Whatever the intended
+    mapping is, it must preserve order. Measured over the 15 R0 rows:
+
+    | | value |
+    |---|---:|
+    | Spearman(`Photoconductance (Max)`, `Normalized photoconductance`) | **−0.5484** |
+    | p | **0.0343** |
+    | strongest film, 8.81e-07 (sample 15) | normalises to **0.010**, the column minimum |
+    | films at exactly 1.000 | samples 4, 7 and 10, all at low raw photoconductance |
+
+    So the axis currently rewards *weaker* photoconductance, and it is significant
+    rather than noisy. **The group has flagged this and is supplying the intended
+    formula.**
+
+    **This is very likely why optoelectronic is unlearnable.** Its plain GP sits
+    at −0.5842, below the null, and the first campaign's mean function makes it
+    worse rather than better. No model can learn a column that ranks backwards
+    against its own measurement, and half of this objective is that column.
+
+    **Reported as a graded finding, never as a gate**, by
+    `scores.AgreementCheck`: which column the model trains on is the group's
+    decision, and a diagnostic that blocked a round would make that decision by
+    refusing to run. It appears in the workbook read, in
+    `scripts/intake_new_data.py` output, and as a standing notice on the `Review`
+    sheet, so nobody reviews a batch without knowing the axis is provisional.
+
+    **Closure path: one recipe edit plus one intake run.** Replace the
+    pass-through input with the real derivation in
+    `objectives.specs[1].measurement`, bump `contract_version`, re-run the intake,
+    and re-decide the mean function — it may well earn its place once the column
+    tracks its measurement. `test_second_campaign.py` pins the −0.5484, so that
+    test failing is the signal to update the record rather than to loosen the
+    check.
+
+**Nothing on this list is now blocked on code.** What remains is a human reading a
+proposed batch (issue 4), the R1 triplicates arriving (issue 7), the
+photoconductance formula (issue 10), and a decision about whether an
+`anneal_temp` floor belongs in `constraints:` — which is now a live list rather
+than an empty one, so adding it is a two-line change.
 
 ## Are beta = 4.0 and radius = 0.25 defensible?
 
