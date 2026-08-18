@@ -95,6 +95,45 @@ def test_only_the_starting_design_differs_between_trials() -> None:
 
 
 def test_the_footer_states_both_hazards() -> None:
+    """The two hazards that do not depend on which campaign is loaded."""
     assert "not a measurement" in sweep.FOOTER
     assert "15 / 5 / 3" in sweep.FOOTER
-    assert "uniformity" in sweep.FOOTER.lower()
+
+
+def test_the_no_signal_caveat_is_read_from_the_config_not_remembered() -> None:
+    """It used to be hard-coded as "uniformity ... permutation p = 0.82".
+
+    That is a fact about the FIRST campaign's uniformity score on the FIRST
+    campaign's films. On the v3 contract that objective is a different
+    construction and optoelectronic is dead as well, so the constant would have
+    put the wrong evidence under the right warning -- which is worse than no
+    caveat, because it looks checked.
+    """
+    from mobo_kit.campaign import load_campaign_config
+
+    active = load_campaign_config("configs/campaign_d2d_perovskite_test.yaml")
+    caveat = sweep.signal_caveat(active)
+    assert "uniformity" in caveat and "optoelectronic" in caveat
+    assert "d2d-objectives-v3-test" in caveat
+    assert "leave-one-out null" in caveat
+    # and it must not carry the previous campaign's evidence
+    assert "0.82" not in caveat
+
+    every_axis_learnable = {
+        "objectives": {
+            "contract_version": "synthetic",
+            "specs": [{"name": "a", "signal_status": "learnable"}],
+        }
+    }
+    assert sweep.signal_caveat(every_axis_learnable) == ""
+
+
+def test_a_single_ratified_cell_keeps_all_three_trials() -> None:
+    """Filtering the knobs must never drop a trial: the trials are what turn
+    three numbers per round into a distribution worth boxing."""
+    cells = sweep.all_cells([36.0], [0.35])
+    assert len(cells) == len(sweep.TRIALS)
+    assert {trial for trial, _b, _r in cells} == {t[0] for t in sweep.TRIALS}
+    assert {(b, r) for _t, b, r in cells} == {(36.0, 0.35)}
+    # and the unfiltered default is unchanged
+    assert len(sweep.all_cells()) == len(sweep.TRIALS) * len(sweep.BETAS) * len(sweep.RADII)

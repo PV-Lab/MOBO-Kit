@@ -79,6 +79,7 @@ import pandas as pd  # noqa: E402
 import torch  # noqa: E402
 from matplotlib.colors import LinearSegmentedColormap  # noqa: E402
 
+from mobo_kit.candidate_diagnostics import batch_hash
 from mobo_kit.campaign import (  # noqa: E402
     build_objective_transform,
     fit_campaign_models,
@@ -203,19 +204,6 @@ def hypervolume(Y_physical: np.ndarray, transform: ObjectiveTransform,
     U = torch.tensor(utilities(Y_physical, transform), dtype=torch.double)
     _ref, _pareto, volume = compute_ref_pareto_hv(U, reference)
     return float(volume)
-
-
-def batch_hash(conditions: pd.DataFrame) -> str:
-    """Order-independent identity of a proposed batch.
-
-    Sorted before hashing because the question the manifest asks is "did these two
-    cells propose the same SET of conditions", not "in the same order".  Rounded to
-    12 decimals so a float representation difference cannot masquerade as a
-    different batch.
-    """
-    values = np.round(np.asarray(conditions, dtype=float), 12)
-    ordered = values[np.lexsort(values.T[::-1])]
-    return hashlib.sha256(ordered.tobytes()).hexdigest()[:16]
 
 
 # --------------------------------------------------------------------------- #
@@ -754,19 +742,39 @@ def check_expectations(
     manifest: pd.DataFrame,
     cells: Sequence[Mapping[str, Any]],
     transform: ObjectiveTransform,
+    config: Mapping[str, Any] | None = None,
+    worklist_hash: str | None = None,
 ) -> list[dict[str, Any]]:
-    """The three pre-registered expectations, stated before the run and checked after.
+    """Pre-registered expectations, stated before the run and checked after.
 
-    Each returns a verdict of HELD / FAILED plus the evidence, so a reader can
+    Each returns HELD / FAILED / NOT APPLICABLE plus the evidence, so a reader can
     disagree with the rule rather than only with the conclusion.
+
+    **A rule with no data reports NOT APPLICABLE, never FAILED.** The two sweep
+    rules below ask about a radius arm and a beta arm; on a single ratified cell
+    those arms are empty by decision, and calling that a failure would put two
+    red lines under a run that did exactly what was asked. That is worse than
+    silence, because it looks checked.
+
+    **The no-signal rule is read from the config, not remembered.** It used to name
+    uniformity, which was the only dead axis on the first campaign. On the v3
+    contract optoelectronic is dead too, and the old rule -- "uniformity moves
+    least of the three" -- would report FAILED for the entirely correct reason
+    that the two dead axes move by similar small amounts.
     """
     results: list[dict[str, Any]] = []
-
-    # 1. Uniformity is exploration-only: it has no learnable signal from the 15 real
-    #    rows (permutation p = 0.82), so the campaign should not be able to climb it.
-    #    RULE: held if uniformity's mean-utility change from R0 to R2 is smaller in
-    #    magnitude, median across cells, than BOTH other objectives'.
     index_by_name = {spec.name: i for i, spec in enumerate(transform.specs)}
+
+    if config is None:
+        dead = {"uniformity"}
+    else:
+        dead = {
+            str(spec["name"])
+            for spec in config["objectives"]["specs"]
+            if str(spec.get("signal_status", "")) not in ("learnable", "")
+        }
+    live = [name for name in index_by_name if name not in dead]
+
     deltas: dict[str, list[float]] = {name: [] for name in index_by_name}
     for cell in cells:
         for name, index in index_by_name.items():
@@ -774,56 +782,89 @@ def check_expectations(
                 float(cell["U"]["R2"][:, index].mean() - cell["U"]["R0"][:, index].mean())
             )
     medians = {name: float(np.median(values)) for name, values in deltas.items()}
-    others = [abs(medians[n]) for n in medians if n != "uniformity"]
-    held = abs(medians.get("uniformity", 0.0)) < min(others) if others else False
-    results.append({
-        "expectation": "uniformity is flat (exploration-only, no learnable signal)",
-        "rule": "|median delta R0->R2| smallest of the three objectives",
-        "verdict": "HELD" if held else "FAILED",
-        "evidence": ", ".join(f"{n} {v:+.4f}" for n, v in medians.items()),
-    })
+    evidence = ", ".join(f"{n} {v:+.4f}" for n, v in medians.items())
 
-    # 2. radius is inert on this problem: achieved batch spacings are far above every
-    #    radius tested, so local penalization rarely has two candidates close enough
-    #    to penalise. RULE: held if every cell in the radius arm shares one R1 hash
-    #    and one R2 hash.
-    arm = manifest[manifest["arm"].isin(("radius", "both"))]
-    r1_unique = sorted(set(arm["r1_batch_hash"]))
-    r2_unique = sorted(set(arm["r2_batch_hash"]))
-    held = len(r1_unique) == 1 and len(r2_unique) == 1
-    results.append({
-        "expectation": "radius produces identical batches (the knob is inert here)",
-        "rule": "one distinct R1 hash and one distinct R2 hash across the radius arm",
-        "verdict": "HELD" if held else "FAILED",
-        "evidence": (
-            f"{len(arm)} cells -> {len(r1_unique)} distinct R1 batch(es), "
-            f"{len(r2_unique)} distinct R2 batch(es); "
-            f"min spacing {arm['r1_min_pairwise_distance'].min():.3f}-"
-            f"{arm['r1_min_pairwise_distance'].max():.3f} against radii "
-            f"{arm['radius'].min():g}-{arm['radius'].max():g}"
-        ),
-    })
+    if not dead or not live:
+        results.append({
+            "expectation": "objectives with no learnable signal do not climb",
+            "rule": "every no-signal axis moves less than every learnable axis",
+            "verdict": "NOT APPLICABLE",
+            "evidence": f"dead axes {sorted(dead)}, learnable axes {sorted(live)}",
+        })
+    else:
+        worst_dead = max(abs(medians[n]) for n in dead)
+        best_live = min(abs(medians[n]) for n in live)
+        results.append({
+            "expectation": "objectives with no learnable signal do not climb",
+            "rule": (
+                f"every axis in {sorted(dead)} moves less, in |median delta "
+                f"R0->R2|, than every axis in {sorted(live)}"
+            ),
+            "verdict": "HELD" if worst_dead < best_live else "FAILED",
+            "evidence": evidence,
+        })
 
-    # 3. beta trades exploitation against exploration, so it should move the batch.
-    #    RULE: held if the beta arm produces more than one distinct R1 batch.
-    arm = manifest[manifest["arm"].isin(("beta", "both"))]
-    r1_unique = sorted(set(arm["r1_batch_hash"]))
-    held = len(r1_unique) > 1
-    results.append({
-        "expectation": "beta changes the R1 batch",
-        "rule": "more than one distinct R1 hash across the beta arm",
-        "verdict": "HELD" if held else "FAILED",
-        "evidence": (
-            f"{len(arm)} cells -> {len(r1_unique)} distinct R1 batch(es) "
-            f"at betas {sorted(set(arm['beta']))}"
-        ),
-    })
+    # The cross-instrument identity. The simulation proposing R1 from the same 15
+    # rows at the same seed and knobs IS the live proposal; if the hashes differ,
+    # something has drifted between the instrument and the campaign and the
+    # instrument should be the one to say so.
+    if worklist_hash is None:
+        results.append({
+            "expectation": "the simulated R1 reproduces the shipped worklist",
+            "rule": "batch_hash of the simulated R1 equals the worklist's",
+            "verdict": "NOT APPLICABLE",
+            "evidence": "no worklist for this round exists on disk to compare",
+        })
+    else:
+        simulated = sorted(set(manifest["r1_batch_hash"]))
+        held = len(simulated) == 1 and simulated[0] == worklist_hash
+        results.append({
+            "expectation": "the simulated R1 reproduces the shipped worklist",
+            "rule": "batch_hash of the simulated R1 equals the worklist's",
+            "verdict": "HELD" if held else "FAILED",
+            "evidence": f"simulated {simulated} against worklist {worklist_hash}",
+        })
+
+    for arm_name, label, rule, expected_distinct in (
+        ("radius", "radius produces identical batches (the knob is inert here)",
+         "one distinct R1 hash and one distinct R2 hash across the radius arm", 1),
+        ("beta", "beta changes the R1 batch",
+         "more than one distinct R1 hash across the beta arm", None),
+    ):
+        keys = ("radius", "both") if arm_name == "radius" else ("beta", "both")
+        arm = manifest[manifest["arm"].isin(keys)]
+        if len(arm) < 2:
+            results.append({
+                "expectation": label,
+                "rule": rule,
+                "verdict": "NOT APPLICABLE",
+                "evidence": (
+                    f"the {arm_name} arm holds {len(arm)} cell(s); this run is a "
+                    "single ratified cell by decision, so there is no arm to vary"
+                ),
+            })
+            continue
+        r1_unique = sorted(set(arm["r1_batch_hash"]))
+        r2_unique = sorted(set(arm["r2_batch_hash"]))
+        if expected_distinct is None:
+            held = len(r1_unique) > 1
+            detail = (
+                f"{len(arm)} cells -> {len(r1_unique)} distinct R1 batch(es) "
+                f"at betas {sorted(set(arm['beta']))}"
+            )
+        else:
+            held = len(r1_unique) == 1 and len(r2_unique) == 1
+            detail = (
+                f"{len(arm)} cells -> {len(r1_unique)} distinct R1 batch(es), "
+                f"{len(r2_unique)} distinct R2 batch(es)"
+            )
+        results.append({
+            "expectation": label,
+            "rule": rule,
+            "verdict": "HELD" if held else "FAILED",
+            "evidence": detail,
+        })
     return results
-
-
-# --------------------------------------------------------------------------- #
-# driver
-# --------------------------------------------------------------------------- #
 
 
 def ofat_conditions() -> list[tuple[float, float, str]]:
@@ -847,13 +888,20 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--workbook", required=True, type=Path)
     parser.add_argument(
-        "--config", type=Path, default=Path("configs/campaign_d2d_perovskite.yaml")
+        "--config", type=Path,
+        default=Path("configs/campaign_d2d_perovskite_test.yaml"),
     )
     parser.add_argument(
         "--output-dir", type=Path, default=Path("local_outputs/round_simulations")
     )
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--slice-points", type=int, default=41)
+    # A ratified cell needs no sweep, and the OFAT set cannot express one:
+    # its betas stop at 25. This runs exactly the cell that was decided.
+    parser.add_argument(
+        "--cell", default=None, metavar="RADIUS,BETA",
+        help="run one arbitrary cell instead of the sweep, e.g. 0.35,36",
+    )
     parser.add_argument(
         "--full-grid", action="store_true",
         help="45-cell radius x beta cross instead of the 13-cell OFAT set.",
@@ -948,7 +996,15 @@ def main(argv: Sequence[str] | None = None) -> int:
           "commit 4b76670")
 
     # ------------------------------------------------------------ conditions --
-    cells_spec = full_grid_conditions() if args.full_grid else ofat_conditions()
+    if args.cell:
+        try:
+            radius_text, beta_text = args.cell.split(",")
+            cells_spec = [(float(radius_text), float(beta_text), "ratified")]
+        except ValueError:
+            print(f"\n--cell must be 'RADIUS,BETA'; got {args.cell!r}.")
+            return 1
+    else:
+        cells_spec = full_grid_conditions() if args.full_grid else ofat_conditions()
     if args.conditions:
         wanted = set(args.conditions)
         cells_spec = [c for c in cells_spec if cell_slug(c[0], c[1]) in wanted]
@@ -1096,7 +1152,33 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"       {', '.join(members)}")
 
     print("\n5. PRE-REGISTERED EXPECTATIONS")
-    for check in check_expectations(manifest, cells, transform):
+    # The shipped worklist, if one exists, so the identity check has something
+    # to compare against. Read here rather than inside check_expectations so the
+    # expectation stays a pure function of what it is handed.
+    worklist_hash = None
+    try:
+        from mobo_kit.workbook_io import candidate_workbook_path, sheet_name_for_round
+        from openpyxl import load_workbook as _load
+
+        sheet_path = candidate_workbook_path(args.workbook, "R1")
+        if sheet_path.exists():
+            sheet = _load(sheet_path, data_only=True)[sheet_name_for_round("R1")]
+            header = [str(c.value).strip() if c.value else "" for c in sheet[1]]
+            columns = [header.index(name) for name in names]
+            seen: list[list[float]] = []
+            for row in sheet.iter_rows(min_row=2, values_only=True):
+                if row[0] is None:
+                    continue
+                values = [float(row[c]) for c in columns]
+                if values not in seen:
+                    seen.append(values)
+            worklist_hash = batch_hash(seen)
+    except Exception as exc:  # noqa: BLE001 - an absent worklist is not an error
+        print(f"   (could not read a worklist to compare: {type(exc).__name__}: {exc})")
+
+    for check in check_expectations(
+        manifest, cells, transform, config=config, worklist_hash=worklist_hash
+    ):
         print(f"\n   {check['verdict']}  {check['expectation']}")
         print(f"     rule     {check['rule']}")
         print(f"     evidence {check['evidence']}")

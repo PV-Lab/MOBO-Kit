@@ -81,6 +81,78 @@ That two-part rule is now what the intake prints: (i) the structured fit must be
 the null by more than the floor; (ii) when structured-versus-plain lands inside the
 floor, the permutation decides.
 
+### Are beta = 36 and radius = 0.35 defensible?
+
+**They are a declared policy choice, not a measured optimum, and the distinction
+matters.** The group chose them with Aleks from the 108-cell β×r sweep
+(`local_outputs/boxplot_sweep`, 3 trials × 4 betas × 9 radii at production
+settings). That sweep **could not rank cells**: the whole spread across betas was
+0.0065 against a trial-to-trial sd of 0.010–0.027, and the best cell was a
+different (β, r) in every trial. It also scored candidates against a *noiseless
+GP oracle of the same model class the optimiser fits*, so the landscape held no
+surprises and exploration had unusually little to earn — it **systematically
+undervalues large β**, which is the very thing this cell buys.
+
+The rationale is a posture, not a score: β = 36 means κ = √36 = 6, heavy
+exploration, which is the right stance when **two of three objectives carry no
+learnable signal** and the third is the only one worth exploiting.
+
+**Two consequences are on record, both measured on the live R1 proposal.**
+
+* **Local penalization is inert at this β.** Achieved minimum batch spacing is
+  **1.091**, three times the 0.35 radius, so the knob has nothing to act on. The
+  sweep predicted this: radius binds *less* as β rises, and at β = 49 the nine
+  radii produced only 3–4 distinct batches.
+* **The batch runs to the edges.** Range-edge coordinates per condition are
+  **[4, 7, 4, 3, 3]** — 21 of 50 — against 11–15 of 80 on the first campaign's
+  arm at β = 4. High exploration plus a monotone thickness trend puts candidates
+  at bounds. That is expected, not a defect, but it is what a reviewer should
+  check before fabricating.
+
+**Two triggers to revisit.** First, when the photoconductance normalisation is
+fixed (issue 10) and optoelectronic may become learnable — the posture was chosen
+for two dead axes and would no longer be justified by the same argument. Second,
+when R1 measurements land and the oracle can be replaced by real film-to-film
+noise, at which point the sweep's central caveat stops applying and a genuine
+ranking becomes possible.
+
+### The simulation at the ratified cell
+
+`scripts/plot_round_simulation.py --cell 0.35,36` runs one campaign against the
+frozen oracle at exactly the decided knobs; `scripts/plot_boxplot_sweep.py
+--betas 36 --radii 0.35` runs the same cell across the three starting designs so
+the per-round boxes have a distribution behind them. Both default to the v3
+config. Outputs: `local_outputs/round_sim_v3_cell` and
+`local_outputs/boxplot_v3_cell`.
+
+Measured on the new data, seed 73:
+
+| | R0 | +R1 | +R2 |
+|---|---:|---:|---:|
+| hypervolume | 0.7929 | 0.7929 | 0.8053 |
+
+**R1 adds no hypervolume at all on this oracle, and R2 adds +0.0124.** That is
+what β = 36 looks like against a landscape with no surprises in it: the batch
+spends its budget on exploration that a noiseless same-class oracle cannot repay.
+It is the caveat above made numerical — the instrument understates the case for
+the policy it is testing — and not evidence that the cell is wrong.
+
+**The cross-instrument identity holds.** The simulated R1 batch hashes to
+`60d1682aa055ca97`, the same as the live `run_r1_ucb` proposal from the measured
+rows. The simulation is describing the batch the campaign would actually ship, not
+a similar one.
+
+Pre-registered expectations, checked after: the two no-signal axes climb far less
+than thickness (+0.1047 and +0.0842 against +0.3967) — **HELD**; the sweep-arm
+rules report **NOT APPLICABLE** rather than FAILED, because a single ratified cell
+has no arm to vary and calling that a failure would put red lines under a run that
+did exactly what was asked.
+
+The dead axes' surfaces are rendered and captioned as fitted noise, never dropped.
+Thickness's surface shows the declared `log T ~ log(speed_1) + log(precur_conc)`
+trend, which is **consistency with what the config told the model, not a
+discovery**.
+
 ### The round report — figures at propose time
 
 Pressing **Propose next round** now also renders six figures beside the workbook,

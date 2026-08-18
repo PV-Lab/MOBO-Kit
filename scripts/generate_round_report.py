@@ -5,11 +5,13 @@
 
 Two modes, matching the two buttons:
 
-* **default** re-reads the round that was last proposed and renders the full set,
-  including the two batch figures. It re-derives the proposal from the config and
-  the measured rows rather than reading it back from the worklist, so what the
-  figures describe is the model's answer at this seed -- if that has drifted from
-  the sheet on disk, these figures say so and that is worth knowing.
+* **default** re-derives the proposal from the config and the measured rows rather
+  than reading it back from the worklist, so what the figures describe is the
+  model's answer at this seed. **When a worklist for that round already exists,
+  the two are compared by batch hash and the result is printed as MATCH or
+  DRIFT.** They should match; if they do not, the config, the data or the seed has
+  moved since the sheet was written, and the figures describe the model rather
+  than the films anyone is about to run.
 * **--data-only** renders everything that depends on measurements alone. This is
   the mode to use the moment a round's results are entered.
 
@@ -28,6 +30,51 @@ from mobo_kit.round_report import generate_round_report
 from mobo_kit.workbook_io import read_campaign_workbook
 
 
+def _worklist_drift(workbook, config, round_name: str, proposal) -> str:
+    """Does the re-derived proposal still match the worklist on disk?
+
+    The figures describe a proposal computed here and now. The films someone runs
+    come from a sheet written earlier. Those are the same batch only if the
+    config, the data and the seed have not moved -- and if they have, the figures
+    are about a different experiment than the one on the bench, which is exactly
+    the sort of quiet divergence that is worth a line of output.
+
+    Compared by ``batch_hash``, so ordering is not mistaken for a difference.
+    """
+    from mobo_kit.candidate_diagnostics import batch_hash
+    from mobo_kit.workbook_io import candidate_workbook_path, sheet_name_for_round
+
+    path = candidate_workbook_path(workbook, round_name)
+    if not path.exists():
+        return f"no {path.name} on disk yet, so there is nothing to compare"
+    try:
+        from openpyxl import load_workbook
+
+        sheet = load_workbook(path, data_only=True)[sheet_name_for_round(round_name)]
+        header = [str(cell.value).strip() if cell.value else "" for cell in sheet[1]]
+        names = [item["name"] for item in config["inputs"]]
+        columns = [header.index(name) for name in names]
+        seen: list[list[float]] = []
+        for row in sheet.iter_rows(min_row=2, values_only=True):
+            if row[0] is None:
+                continue
+            values = [float(row[c]) for c in columns]
+            if values not in seen:
+                seen.append(values)
+    except Exception as exc:  # noqa: BLE001 - a check must not break the report
+        return f"could not read {path.name} to compare ({type(exc).__name__}: {exc})"
+
+    on_disk = batch_hash(seen)
+    derived = batch_hash(proposal.conditions.to_numpy(float))
+    if on_disk == derived:
+        return f"MATCH - the re-derived batch is {path.name}'s ({derived})"
+    return (
+        f"DRIFT - re-derived {derived} against {on_disk} in {path.name}. The "
+        "config, the data or the seed has moved since that sheet was written, so "
+        "these figures describe a different batch than the one on the bench."
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workbook", required=True)
@@ -43,7 +90,11 @@ def main(argv: list[str] | None = None) -> int:
         "--shap-instances",
         type=int,
         default=15,
-        help="rows to attribute; the runtime knob, recorded in the manifest",
+        help=(
+            "rows to attribute. NOT the main runtime knob -- the leave-one-out "
+            "refits are about two thirds of the cost and are not optional. "
+            "Recorded in the manifest either way."
+        ),
     )
     args = parser.parse_args(argv)
 
@@ -75,6 +126,8 @@ def main(argv: list[str] | None = None) -> int:
                 seed=proposal.diagnostics.get("seed"),
                 findings=contents.findings,
             )
+            drift = _worklist_drift(workbook, config, round_name, proposal)
+            print(f"  worklist check: {drift}")
 
     manifest = generate_round_report(
         workbook,

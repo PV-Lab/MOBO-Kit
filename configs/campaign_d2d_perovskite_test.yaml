@@ -337,6 +337,11 @@ rounds:
     # trial-to-trial sd of 0.010-0.027, and the best cell was a different (beta, r)
     # in every trial. So this is a declared policy choice about how much to
     # explore, not a measured optimum, and it should be recorded as such.
+    #
+    # MEASURED CONSEQUENCES, live R1: batch spacing 1.091 (three times the
+    # radius, so penalization is inert here) and 21 of 50 coordinates at a
+    # range edge. Revisit when the photoconductance normalisation is fixed or
+    # when R1 noise replaces the oracle -- see CAMPAIGN_STATUS.
     beta: 36.0
     candidate_pool_size: 32768
     posterior_samples: 256

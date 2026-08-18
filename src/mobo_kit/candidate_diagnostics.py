@@ -43,6 +43,26 @@ def _weights(dimension_weights: np.ndarray | None, dimension: int) -> np.ndarray
     return weights
 
 
+def batch_hash(conditions: "np.ndarray | Any") -> str:
+    """Order-independent identity of a proposed batch.
+
+    Sorted before hashing because the question is "did these two runs propose the
+    same SET of conditions", not "in the same order". Rounded to 12 decimals so a
+    float representation difference cannot masquerade as a different batch.
+
+    Used for two different questions and it must be the same function for both:
+    whether a simulated trajectory reproduces the batch that was actually shipped,
+    and whether two sweep cells proposed the same experiment.
+    """
+    import hashlib
+
+    values = np.round(np.asarray(conditions, dtype=float), 12)
+    if values.ndim != 2:
+        raise ValueError(f"batch_hash needs a 2-D block; got shape {values.shape}.")
+    ordered = values[np.lexsort(values.T[::-1])]
+    return hashlib.sha256(ordered.tobytes()).hexdigest()[:16]
+
+
 def pairwise_normalized_distances(
     X_norm: np.ndarray,
     *,

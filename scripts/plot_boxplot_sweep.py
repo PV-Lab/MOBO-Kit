@@ -96,22 +96,56 @@ FOOTER = (
     "to the 15 real films and frozen, and no R1/R2 condition was ever fabricated. "
     "This compares acquisition settings on a data-shaped landscape, not chemistry.\n"
     "Rounds hold 15 / 5 / 3 conditions. A box over three numbers reports little "
-    "more than those numbers, which is why every raw point is drawn on top. "
-    "Uniformity carries no validated signal (permutation p = 0.82) -- read its "
-    "panels as exploration, not as a result."
+    "more than those numbers, which is why every raw point is drawn on top."
 )
+
+
+def signal_caveat(config: Any) -> str:
+    """Name the dead axes from THIS config, never from a remembered campaign.
+
+    The line here used to read "uniformity carries no validated signal
+    (permutation p = 0.82)", which is a fact about the first campaign's uniformity
+    score on the first campaign's films. On the v3 contract that objective is a
+    different construction and optoelectronic is dead as well, so a hard-coded
+    caveat would have shipped the wrong evidence attached to the right warning --
+    which is worse than no caveat, because it looks checked.
+    """
+    dead = [
+        str(spec["name"])
+        for spec in config["objectives"]["specs"]
+        if str(spec.get("signal_status", "")) not in ("learnable", "")
+    ]
+    if not dead:
+        return ""
+    listed = " and ".join(dead) if len(dead) < 3 else ", ".join(dead)
+    verb = "carries" if len(dead) == 1 else "carry"
+    return (
+        f"\n{listed} {verb} no learnable signal on this contract "
+        f"({config['objectives']['contract_version']}): the model does not beat "
+        "the leave-one-out null, so read those panels as exploration and not as a "
+        "result."
+    )
 
 
 def cell_key(trial: str, beta: float, radius: float) -> str:
     return f"{trial}__beta_{beta:g}__radius_{radius:g}".replace(".", "p")
 
 
-def all_cells() -> list[tuple[str, float, float]]:
+def all_cells(
+    betas: Sequence[float] | None = None,
+    radii: Sequence[float] | None = None,
+) -> list[tuple[str, float, float]]:
+    """Every (trial, beta, radius) to run. Filters keep the trial axis intact.
+
+    Restricting the knobs never drops a trial: the trials are what turn three
+    numbers per round into a distribution worth boxing, so a "one cell" run is
+    still three campaigns from three starting designs.
+    """
     return [
         (trial, beta, radius)
         for trial, _source, _seed in TRIALS
-        for beta in BETAS
-        for radius in RADII
+        for beta in (BETAS if betas is None else tuple(float(b) for b in betas))
+        for radius in (RADII if radii is None else tuple(float(r) for r in radii))
     ]
 
 
@@ -159,7 +193,7 @@ def run_shard(args: argparse.Namespace) -> int:
         for name, source, lhs_seed in TRIALS
     }
 
-    cells = all_cells()
+    cells = all_cells(args.betas, args.radii)
     mine = cells[args.shard :: args.num_shards]
     out_dir = Path(args.output_dir) / "cells"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -240,11 +274,16 @@ def compose(args: argparse.Namespace) -> int:
     config = load_campaign_config(args.config)
     transform = build_objective_transform(config)
     names = list(transform.names)
+    # Compose exactly what was run. Iterating the full sweep constants here while
+    # the run was filtered would draw a page of "missing" panels around the one
+    # cell anybody asked for.
+    betas_used = BETAS if args.betas is None else tuple(float(b) for b in args.betas)
+    radii_used = RADII if args.radii is None else tuple(float(r) for r in args.radii)
     cells_dir = Path(args.output_dir) / "cells"
 
     loaded: dict[str, Any] = {}
     missing: list[str] = []
-    for trial, beta, radius in all_cells():
+    for trial, beta, radius in all_cells(args.betas, args.radii):
         key = cell_key(trial, beta, radius)
         path = cells_dir / f"{key}.npz"
         if path.exists():
@@ -278,15 +317,18 @@ def compose(args: argparse.Namespace) -> int:
     figures_dir = Path(args.output_dir) / "pages"
     figures_dir.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, Any]] = []
-    pdf_path = Path(args.output_dir) / "boxplot_sweep_12pages.pdf"
+    pages = len(TRIALS) * len(betas_used)
+    pdf_path = Path(args.output_dir) / f"boxplot_sweep_{pages}pages.pdf"
 
     with PdfPages(pdf_path) as pdf:
         for trial, _source, lhs_seed in TRIALS:
-            for beta in BETAS:
+            for beta in betas_used:
                 fig, axes = plt.subplots(
-                    len(RADII), len(names), figsize=(12.5, 26.0), facecolor=SURFACE
+                    len(radii_used), len(names),
+                    figsize=(12.5, max(5.0, 26.0 * len(radii_used) / len(RADII))),
+                    facecolor=SURFACE, squeeze=False,
                 )
-                for row, radius in enumerate(RADII):
+                for row, radius in enumerate(radii_used):
                     key = cell_key(trial, beta, radius)
                     data = loaded.get(key)
                     for column, objective in enumerate(names):
@@ -328,17 +370,25 @@ def compose(args: argparse.Namespace) -> int:
                                 "final_fit_warnings": int(data["fit_warnings"]),
                             })
                 source = "15 real recipes" if trial == "real" else f"LHS seed {lhs_seed}"
+                shown = sorted(radii_used)
+                span = (
+                    f"radius {shown[0]:g}"
+                    if len(shown) == 1
+                    else f"radius {shown[0]:g} → {shown[-1]:g}"
+                )
                 fig.suptitle(
                     f"Utility by round   |   trial {trial} ({source})   |   "
-                    f"beta = {beta:g}   |   radius 0.05 → 0.45",
+                    f"beta = {beta:g}   |   {span}",
                     fontsize=15, color=INK, y=0.995,
                 )
                 fig.tight_layout(rect=(0, 0.035, 1, 0.982))
                 fig.text(
-                    0.008, 0.006, "seed 73  |  " + FOOTER,
+                    0.008, 0.006, "seed 73  |  " + FOOTER + signal_caveat(config),
                     fontsize=6.6, color=INK_MUTED, va="bottom", ha="left", wrap=True,
                 )
                 stem = f"page_{trial}_beta_{beta:g}".replace(".", "p")
+                if len(radii_used) == 1:
+                    stem += f"_radius_{radii_used[0]:g}".replace(".", "p")
                 page = figures_dir / f"{stem}.png"
                 fig.savefig(page, dpi=110, facecolor=SURFACE)
                 pdf.savefig(fig, facecolor=SURFACE)
@@ -357,10 +407,22 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--workbook", required=True, type=Path)
     parser.add_argument(
-        "--config", type=Path, default=Path("configs/campaign_d2d_perovskite.yaml")
+        "--config", type=Path,
+        default=Path("configs/campaign_d2d_perovskite_test.yaml"),
     )
     parser.add_argument(
         "--output-dir", type=Path, default=Path("local_outputs/boxplot_sweep")
+    )
+    # A ratified cell needs no sweep. The grid is a decision, not a default:
+    # running 108 cells to look at one is not thoroughness, it is 36x the
+    # compute for the same answer.
+    parser.add_argument(
+        "--betas", nargs="+", type=float, default=None,
+        help="restrict to these betas; default is the full sweep set",
+    )
+    parser.add_argument(
+        "--radii", nargs="+", type=float, default=None,
+        help="restrict to these radii; default is the full sweep set",
     )
     parser.add_argument("--shard", type=int, default=0)
     parser.add_argument("--num-shards", type=int, default=1)

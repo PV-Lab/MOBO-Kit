@@ -948,8 +948,12 @@ def _figure_hv_trajectory(
         "points can only grow a Pareto front. Random sampling produces a rising "
         "line too, so this shows progress and is not evidence of optimisation.",
         "OBSERVED outcomes only. No predicted point appears on this line.",
-        f"Fixed campaign reference point {list(np.round(np.asarray(reference, float), 4))} "
-        "in utility space. Re-deriving it per round would make these numbers "
+        # `list(np.round(...))` yields np.float64 objects whose repr leaks the
+        # type into the caption. A figure that prints "np.float64(-0.01)" at an
+        # experimentalist is telling them about numpy, not about the campaign.
+        "Fixed campaign reference point "
+        + str([round(float(value), 4) for value in np.asarray(reference, float)])
+        + " in utility space. Re-deriving it per round would make these numbers "
         "incomparable with each other.",
     ]
     _save(fig, directory / "04_hv_trajectory.png", caveats)
