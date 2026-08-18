@@ -28,6 +28,7 @@ import subprocess
 import sys
 import traceback
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
@@ -282,6 +283,10 @@ class Generated:
     result: RoundResult
     provenance: list[str] = field(default_factory=list)
     review: BatchReview | None = None
+    report: Any = None
+    """The round report's manifest, or ``None`` if it was skipped or failed."""
+    report_error: str | None = None
+    """Why the report is missing. A batch is never rolled back over a figure."""
 
     @property
     def n_films(self) -> int:
@@ -322,6 +327,15 @@ class Generated:
                 "Nothing here is approved. Read the conditions, then run each in "
                 "triplicate and fill in the highlighted columns.",
             ]
+        if self.report is not None:
+            lines += ["", self.report.summary()]
+        elif self.report_error is not None:
+            lines += [
+                "",
+                "FIGURES NOT PRODUCED",
+                "-" * 78,
+                self.report_error,
+            ]
         return "\n".join(lines)
 
 
@@ -331,8 +345,16 @@ def generate_next_round(
     *,
     seed: int | None = None,
     progress: Callable[[str], None] | None = None,
+    with_report: bool = True,
 ) -> Generated:
-    """Propose and write whichever round is due.  Refuses if none is."""
+    """Propose and write whichever round is due.  Refuses if none is.
+
+    ``with_report`` renders the round's figures beside the workbook afterwards.
+    **A failure there never costs the batch.** The worklist and the Review sheet
+    are already written and correct at that point; discarding them because a
+    figure could not be drawn would throw away the expensive, careful part of the
+    run over the cheap, decorative one. The failure is reported loudly instead.
+    """
 
     def say(message: str) -> None:
         if progress is not None:
@@ -374,6 +396,14 @@ def generate_next_round(
     )
     say("Building the review...")
     contents = read_campaign_workbook(path, config)
+    # The report directory is decided BEFORE the review is written, so the Review
+    # sheet can point at the figures. The report is rendered into exactly this
+    # directory afterwards; if it fails, the sheet points at a directory holding
+    # the error trace, which is more useful than pointing at nothing.
+    from .round_report import report_directory
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    figures_dir = report_directory(path, round_name, when=stamp)
     review = build_batch_review(
         config,
         X,
@@ -385,6 +415,7 @@ def generate_next_round(
         context={
             "Round": round_name,
             "Worklist": sheet_path.name,
+            "Figures": str(figures_dir),
             "Trained on": "; ".join(provenance),
             "Observations": len(X),
             "Method": result.diagnostics.get("method"),
@@ -396,6 +427,28 @@ def generate_next_round(
     )
     write_review_sheet(sheet_path, review)
 
+    report = None
+    report_error = None
+    if with_report:
+        from .round_report import generate_round_report
+
+        try:
+            report = generate_round_report(
+                path,
+                config,
+                proposal=result,
+                review=review,
+                outdir=figures_dir,
+                when=stamp,
+                seed=result.diagnostics.get("seed"),
+                progress=progress,
+            )
+        except Exception as exc:  # noqa: BLE001 - a figure must never cost a batch
+            report_error = (
+                f"{type(exc).__name__}: {exc}. The worklist and the Review sheet "
+                "were written and are unaffected."
+            )
+
     say("Done.")
     return Generated(
         round_name=round_name,
@@ -403,7 +456,28 @@ def generate_next_round(
         result=result,
         provenance=provenance,
         review=review,
+        report=report,
+        report_error=report_error,
     )
+
+
+def generate_data_report(
+    workbook: str | Path,
+    config: Mapping[str, Any],
+    *,
+    seed: int | None = None,
+    progress: Callable[[str], None] | None = None,
+) -> Any:
+    """Figures from the measurements alone, with no batch proposed.
+
+    What the "Figures from current data" button runs. Useful the moment a round's
+    measurements are entered and before anyone decides whether to propose: the
+    parity, attribution, hypervolume and objective-space figures are all about
+    what has been measured, and none of them needs a candidate batch.
+    """
+    from .round_report import generate_round_report
+
+    return generate_round_report(workbook, config, seed=seed, progress=progress)
 
 
 def reveal(path: str | Path) -> None:
@@ -455,6 +529,7 @@ class LauncherWindow:
         self._config: dict[str, Any] | None = None
         self._status: CampaignStatus | None = None
         self._generated: Generated | None = None
+        self._report: Any = None
         self._busy = False
         self._request_id = 0
         self._auto_check_id: Any = None
@@ -509,6 +584,13 @@ class LauncherWindow:
             buttons, text="Show the new sheet", command=self.reveal, state="disabled"
         )
         self.reveal_button.pack(side="left")
+        # Enabled from the start: it needs measurements, not a proposal, and the
+        # question "is the model learning anything yet" is worth asking before
+        # deciding whether to spend fifteen films on a batch.
+        self.figures_button = ttk.Button(
+            buttons, text="Figures from current data", command=self.figures
+        )
+        self.figures_button.pack(side="left", padx=6)
         ttk.Button(buttons, text="Close", command=self.root.destroy).pack(side="right")
 
         self.root.after(120, self._drain)
@@ -642,6 +724,14 @@ class LauncherWindow:
             self._status = None
             self._finish()
             return
+        if kind == "report":
+            self._report = payload
+            self.headline.configure(
+                text=f"{len(payload.figures)} figures written. Nothing is approved."
+            )
+            self._write(payload.summary())
+            self._finish()
+            return
         if kind == "error":
             error = payload
             if isinstance(error, (LauncherError, CandidateSheetError, ValueError)):
@@ -709,6 +799,28 @@ class LauncherWindow:
                 progress=lambda message: post("progress", message),
             )
             return "generated", generated
+
+        self._in_thread(work)
+
+    def figures(self) -> None:
+        """Render the data-only report. Needs measurements, not a proposal."""
+        self._cancel_auto_check()
+        if self._busy:
+            return
+        workbook = self.path_var.get().strip()
+        if not workbook:
+            self.headline.configure(text="Choose a workbook first.")
+            return
+        self._start("Rendering figures from the measured data...")
+
+        def work(post: Callable[[str, Any], None]) -> tuple[str, Any]:
+            config = self._config_or_load()
+            manifest = generate_data_report(
+                workbook,
+                config,
+                progress=lambda message: post("progress", message),
+            )
+            return "report", manifest
 
         self._in_thread(work)
 

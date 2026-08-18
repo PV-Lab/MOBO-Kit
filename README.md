@@ -77,6 +77,14 @@ Double-click **`launch_mobo_kit.bat`** (Windows) or **`launch_mobo_kit.command`*
    settings sit at the edge of their range. The same text appears in the window, so
    it can be forwarded to the group as-is.
 
+4. **Figures.** The same press renders six figures beside the workbook, under
+   `<name>_reports/<round>_<timestamp>/`: where the batch sits in recipe space,
+   how well the model predicts a film it has not seen, which inputs move each
+   objective, what the batch is expected to produce, hypervolume so far, and the
+   trade-off itself. Each one writes the CSV behind it. A second button,
+   **Figures from current data**, renders the four that need no batch — useful the
+   moment measurements are entered.
+
 Then run the films, fill in the highlighted columns of that new sheet, and press
 the button again. R2 reads the R1 measurements back and aggregates each condition's
 three films into one observation.
@@ -127,6 +135,14 @@ decision rule written before the numbers existed — and the answer was to keep
 per-seed standard deviation. That is the outcome that says a default was not a
 lucky pick.
 
+The **second campaign runs `beta = 36`, `radius = 0.35`**, chosen by the group from
+a 108-cell sweep against a frozen GP oracle (`scripts/plot_boxplot_sweep.py`). That
+is a declared policy choice about how much to explore rather than a measured
+optimum: the spread across betas there was 0.0065 against a trial-to-trial sd of
+0.010–0.027, and the oracle — noiseless, and the same model class the optimiser
+fits — systematically undervalues exploration. Heavy exploration is the right
+posture when two of three objectives carry no learnable signal.
+
 ## Repository layout
 
 ```
@@ -143,6 +159,9 @@ src/mobo_kit/
   objectives.py           objective value -> utility contract
   replicate_variance.py   replicate films -> observation variance (train_Yvar)
   batch_review.py         what a proposed batch says, before anyone fabricates it
+  round_report.py         the six figures a round produces, and their data
+  loocv.py                the one leave-one-out fold loop, shared by all callers
+  attribution.py          exact Shapley values over the campaign's own models
   launcher.py             the one-button loop, and the tkinter window over it
   ucb_hvi.py              UCB hypervolume-improvement scoring (R1)
   qlognehvi_batch.py      qLogNEHVI batch selection (R2)
@@ -163,8 +182,9 @@ docs/      HANDOFF.md, CAMPAIGN_STATUS.md, GP_MODEL_DECISION.md,
            SHAP_SUMMARY.md
 scripts/   diagnostics, report figures, intake_new_data.py,
            dtlz2_parameter_sweep.py, plot_round_simulation.py,
-           plot_shap_attribution.py
-tests/     558 tests
+           plot_shap_attribution.py, permutation_rank_test.py,
+           generate_round_report.py
+tests/     575 tests
 launch_mobo_kit.bat, launch_mobo_kit.command   double-click entry points
 ```
 
@@ -211,8 +231,8 @@ hypervolume stops being comparable across them.
 
 | Setting | Value | Config key |
 |---|---|---|
-| UCB beta (R1) | 4.0 | `rounds.r1.beta` |
-| Local penalization radius | 0.25 | `local_penalization.radius` |
+| UCB beta (R1) | 36.0 | `rounds.r1.beta` |
+| Local penalization radius | 0.35 | `local_penalization.radius` |
 | Minimum batch spacing | 0.15 | `local_penalization.min_batch_distance` |
 | Candidate pool | 32768 | `rounds.*.candidate_pool_size` |
 | Posterior samples (R1) | 256 | `rounds.r1.posterior_samples` |

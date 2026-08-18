@@ -311,7 +311,12 @@ def test_generating_r1_writes_a_sheet_and_leaves_the_source_alone(
 
     before = hashlib.sha256(workbook.read_bytes()).hexdigest()
     messages: list[str] = []
-    generated = generate_next_round(workbook, config, progress=messages.append)
+    # with_report=False: the figures have their own module and their own tests,
+    # and rendering them here would put ~80 s of matplotlib into a test about
+    # whether a worklist is written.
+    generated = generate_next_round(
+        workbook, config, progress=messages.append, with_report=False
+    )
 
     assert generated.round_name == "R1"
     assert generated.sheet_path == candidate_workbook_path(workbook, "R1")
@@ -337,7 +342,7 @@ def test_generating_r1_writes_a_sheet_and_leaves_the_source_alone(
 def test_generating_refuses_when_no_round_is_due(workbook, config) -> None:
     write_candidate_sheet(workbook, config, _conditions(config), round_name="R1")
     with pytest.raises(LauncherError, match="no results have been entered"):
-        generate_next_round(workbook, config)
+        generate_next_round(workbook, config, with_report=False)
 
 
 def test_generating_never_overwrites_an_existing_sheet(workbook, config, monkeypatch) -> None:
@@ -361,7 +366,7 @@ def test_generating_never_overwrites_an_existing_sheet(workbook, config, monkeyp
         ),
     )
     with pytest.raises(LauncherError, match="already exists"):
-        generate_next_round(workbook, config)
+        generate_next_round(workbook, config, with_report=False)
 
 
 # --------------------------------------------------------------------------- #

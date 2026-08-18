@@ -284,18 +284,27 @@ objectives:
     # on log(T), so the geometric mean is the arithmetic mean in the space the
     # model actually works in.
     replicate_aggregate: mean_of_log
-    # KEPT, but on a weaker footing than in the first campaign, and the difference
-    # is worth stating. Intake 2026-08-17: plain +0.5227, structured +0.6630, swing
-    # +0.1403 against a resolution floor of 0.236 -- so the mean function is
-    # INCONCLUSIVE here, not demonstrated. Both fits clear the null decisively,
-    # which is what keeps the block: the intake's delete rule fires when a mean
-    # function fails to beat the null, and this one does not fail.
+    # KEPT, and the case is the RANK PERMUTATION rather than the R2 swing --
+    # the same standing the first campaign's thickness mean function had.
     #
-    # What has changed is that the plain GP now learns thickness on its own
-    # (+0.5227, against +0.116 in the first campaign), so the trend has much less
-    # left to explain. The block stays because its two predictors were fixed from
-    # spin-coating physics before any fitting, not because the swing proves
-    # anything at N=15. Do not quote +0.1403 as evidence; it is inside the floor.
+    # Intake 2026-08-17 left this INCONCLUSIVE on R2: plain +0.5227, structured
+    # +0.6630, a swing of +0.1403 against a resolution floor of 0.236. That is not
+    # a verdict, it is a statement that R2 cannot resolve the difference at N=15.
+    #
+    # The permutation adjudicated it on 2026-08-18, and decisively:
+    #
+    #   observed rank rho  +0.7250
+    #   null mean          -0.1917  (sd 0.2937)
+    #   exceedances        4 of 1800
+    #   p                  0.0028   95% CI [0.0003, 0.0052]
+    #
+    # Reproduce with:
+    #   python scripts/permutation_rank_test.py --objective thickness --permutations 1800
+    #
+    # Stronger than the first campaign's p = 0.0350 on its own films. Rank is the
+    # right statistic because rank is what the acquisition consumes; it never sees
+    # R2. Do not quote the +0.1403 swing as evidence -- it is inside the floor, and
+    # the permutation is what carries the weight.
     mean_function:
       response: log
       features:
@@ -314,7 +323,21 @@ rounds:
     method: ucb_hvi
     batch_size: 5
     replicates_per_condition: 3
-    beta: 4.0
+    # CHANGED 2026-08-18, from 4.0. Chosen by the group with Aleks from the
+    # 108-cell beta x radius sweep (3 trials x 4 betas x 9 radii, full production
+    # settings, local_outputs/boxplot_sweep). beta = 36 means kappa = sqrt(36) = 6:
+    # heavy exploration, which is the right posture when two of the three axes
+    # carry no learnable signal and the third is the only one worth exploiting.
+    #
+    # READ THE SWEEP'S OWN CAVEAT BEFORE QUOTING IT AS EVIDENCE. That sweep scored
+    # candidates against a noiseless GP oracle of the same model class the
+    # optimiser fits, so the landscape held no surprises and exploration had
+    # unusually little to earn; it systematically UNDERVALUES large beta. It also
+    # could not rank cells - the spread across betas was 0.0065 against a
+    # trial-to-trial sd of 0.010-0.027, and the best cell was a different (beta, r)
+    # in every trial. So this is a declared policy choice about how much to
+    # explore, not a measured optimum, and it should be recorded as such.
+    beta: 36.0
     candidate_pool_size: 32768
     posterior_samples: 256
     # thickness utility is a nonlinear function of the model output, so utility
@@ -401,7 +424,13 @@ review:
 local_penalization:
   distance_metric: normalized_euclidean
   dimension_weights: null
-  radius: 0.25
+  # CHANGED 2026-08-18, from 0.25. Same sweep, same standing: a policy choice.
+  # Radius buys batch diversity and pays for it in range-edge pinning - measured on
+  # the first campaign at 11 -> 15 edge coordinates across the arm. The sweep also
+  # found that radius binds LESS as beta rises (at beta 49 the nine radii produced
+  # only 3-4 distinct batches, with achieved spacing already above every radius
+  # tested), so at beta = 36 this knob has less to do than it did at beta = 4.
+  radius: 0.35
   min_batch_distance: 0.15
   min_observed_distance: 0.0
 

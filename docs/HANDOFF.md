@@ -19,6 +19,18 @@ ahead of `origin/colin`: the SHAP attribution work, the beta x radius boxplot
 sweep, the tkinter capture fix, and the second campaign. The group is keeping this
 local for now, so do not push without asking.
 
+**Proposing a round now also renders six figures**, beside the workbook under
+`<stem>_reports/<round>_<UTC timestamp>/`, and a second button renders the four
+that need no batch. `docs/CAMPAIGN_STATUS.md` has the "round report" section:
+what each figure can and cannot claim, the two equalities its tests assert, and
+the three notebook conventions deliberately not carried over.
+
+**The thickness mean function is settled at p = 0.0028** (rank permutation, 1800
+shuffles, 4 exceedances, 95% CI [0.0003, 0.0052]). Intake had left it inconclusive
+on R2, which is a statement that R2 cannot resolve it at N=15 rather than a
+verdict; `scripts/permutation_rank_test.py` is the instrument that decides, and
+intake now says so when it lands there.
+
 ## Read these, in this order (~20 minutes)
 
 1. **`README.md`** — what the toolkit is, the three-round loop, current parameters,

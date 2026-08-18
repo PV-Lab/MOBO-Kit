@@ -58,13 +58,88 @@ target was redefined underneath it, so the old evidence was never about this
 quantity. Do not reinstate it from the archived config without a fresh verdict.
 Issue 10 is the prime suspect for why the objective is unlearnable at all.
 
-**Thickness is on better footing than before but its mean function is on worse.**
-The plain GP now reaches +0.5227 where the first campaign's managed +0.116, so the
-trend has much less left to explain: the +0.1403 swing is inside the ±0.236 floor
-and is *inconclusive*, not demonstrated. The block stays because its two
-predictors were fixed from spin-coating physics before any fitting and because it
-clears the null either way — not because the swing proves anything. **Do not quote
-+0.1403 as evidence.**
+**Thickness keeps its mean function, decided by the rank permutation.** The plain
+GP now reaches +0.5227 where the first campaign's managed +0.116, so the trend has
+much less left to explain and the +0.1403 swing is inside the ±0.236 floor —
+*inconclusive on R²*, which is a statement that R² cannot resolve it at N=15
+rather than a verdict. `scripts/permutation_rank_test.py` adjudicated it on
+2026-08-18:
+
+| | value |
+|---|---:|
+| observed rank ρ | **+0.7250** |
+| null mean (sd) | −0.1917 (0.2937) |
+| exceedances | **4 of 1800** |
+| p | **0.0028**, 95% CI [0.0003, 0.0052] |
+
+Stronger than the first campaign's p = 0.0350 on its own films. **Rank is the
+right statistic because rank is what the acquisition consumes** — it never sees
+R². **Do not quote +0.1403 as evidence**; the permutation is what carries the
+weight, and the swing is merely consistent with it.
+
+That two-part rule is now what the intake prints: (i) the structured fit must beat
+the null by more than the floor; (ii) when structured-versus-plain lands inside the
+floor, the permutation decides.
+
+### The round report — figures at propose time
+
+Pressing **Propose next round** now also renders six figures beside the workbook,
+in `<workbook stem>_reports/<round>_<UTC timestamp>/`. A second button, **Figures
+from current data**, renders the four that need no batch — use it the moment a
+round's measurements are entered, before deciding whether to propose at all. Same
+thing headless:
+
+```bash
+python scripts/generate_round_report.py --workbook "local_inputs/Summary Table Test.xlsx" --data-only
+```
+
+**Every figure writes the CSV behind it**, plus a `manifest.json` recording the
+contract version, seed, git describe, reference point, runtime and the active
+notices. A PNG whose numbers cannot be re-derived is the next
+plausible-finite-number bug; this project has had three. Two equalities are
+asserted by tests rather than by convention: the parity numbers *are*
+`intake_new_data.py`'s numbers (one shared fold loop in `mobo_kit.loocv`, not two
+implementations that agree today), and figure 03's numbers *are* the Review
+sheet's.
+
+| figure | what it shows | what it cannot claim |
+|---|---|---|
+| `00_batch_placement` | proposed recipes over the measured cloud, normalised to the declared grid, plus batch spacing | nothing about quality — only where in recipe space the batch goes |
+| `01_loo_parity` | leave-one-out prediction against measurement, per objective, with LOO R² and the null | an axis marked NO LEARNABLE SIGNAL has a model that does not beat the null; its scatter is nothing, not a weak trend |
+| `02_attribution` | mean \|SHAP\| per input per objective, in utility units | explains the **model**, not the world; features in a `mean_function` were *told* to it; on a no-signal axis the bars are fitted noise |
+| `03_batch_predictions` | predicted measurement and utility per condition, plus the batch's ΔHV distribution and per-candidate P(non-dominated) | predictions, not measurements |
+| `04_hv_trajectory` | cumulative observed hypervolume per measured round | monotone **by construction** — random sampling rises too, so this is progress, not proof of optimisation |
+| `05_objective_space` | pairwise utility panels with per-pair fronts, 3-objective front ringed, plus one fixed 3D view | the Pareto set is non-dominated among what has been **measured**, not across the design space |
+
+**Runtime is about 15 s at N=15** on an idle machine, dominated by the 45
+leave-one-out refits (9.8 s) and the attribution (a few seconds at 15 instances).
+The fold loop runs single-threaded on purpose: at 14×10 the matrices are small
+enough that intra-op threading costs more than it buys — 9.8 s at one thread
+against 15.1 s at this box's default of 12, bit-identical either way.
+
+*The first measurement of that recorded 51 s against 117 s and was wrong: it was
+taken while sixteen permutation workers were saturating the CPU. The effect was
+real but was of the load, not the thread count. A timing under contention is an
+unreproduced number like any other, and this project's rule is that those get
+re-measured rather than written down. Add the first render of a session to any of
+these: matplotlib builds its font cache once, which cost about a minute here.*
+
+**A report failure never costs a batch.** The worklist and the Review sheet are
+written before the figures are drawn; if rendering fails, `Generated.report_error`
+says so and the batch stands. Inside the report, one failed figure is recorded in
+the manifest and the rest still render.
+
+**Three notebook conventions were deliberately not ported.**
+
+* **In-sample parity.** Asking a model about points it was fitted on measures
+  memorisation; at N=15 in 10 dimensions it is close to a straight line whatever
+  the model knows. Parity here is leave-one-out.
+* **Ad-hoc sign flips at plot time.** Objective polarity is a config contract
+  (`goal:`). Flipping a sign in a figure makes the figure disagree with the
+  optimiser, and only one of them is right.
+* **Auto-referenced hypervolume.** The reference point is required and
+  campaign-fixed. A reference re-derived per call gave 6e-8 against 1.448 on the
+  same data once already — see issue 5.
 
 ### The two grid edits
 

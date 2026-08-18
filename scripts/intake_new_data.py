@@ -1,6 +1,6 @@
 """One command to run when the experimental group returns new or corrected data.
 
-    python scripts/intake_new_data.py --workbook "local_inputs/Summary Table.xlsx"
+    python scripts/intake_new_data.py --workbook "local_inputs/Summary Table Test.xlsx"
 
 The group has always described the current numbers as test data, so a replacement
 was expected from the start.  When it arrives, the question is not "does the code
@@ -31,95 +31,32 @@ Nothing here decides anything. It prints what the data supports so a human can.
 from __future__ import annotations
 
 import argparse
-import math
-import warnings
 from pathlib import Path
 
 import numpy as np
-import torch
 
 from mobo_kit.campaign import (
     assert_scaling_is_campaign_fixed,
     build_design_from_config,
     build_objective_transform,
     load_campaign_config,
-    normalise_inputs,
     objective_names,
 )
 from mobo_kit.constraints import constraint_violations, constraints_from_config
-from mobo_kit.model_validation import (
-    DIM_SCALED_PRIOR,
-    SIGNAL_COLLAPSE_STAGE,
-    ModelFitError,
-    fit_model_variant,
+from mobo_kit.loocv import (
+    RESOLUTION_SD_AT_15,
+    loo_predictions,
+    null_loo_r2,
+    resolution_sd,
 )
+from mobo_kit.model_validation import ModelFitError
 from mobo_kit.scores import ScoreSeverity
-from mobo_kit.structured_mean import build_structured_mean, mean_spec_from_config
+from mobo_kit.structured_mean import mean_spec_from_config
 from mobo_kit.workbook_io import read_campaign_workbook
 
-#: Bootstrap sd of LOO R2 measured at N=15. Scaled by sqrt(15/N) below, which is an
-#: approximation -- re-run the bootstrap if a decision turns on the third decimal.
-RESOLUTION_SD_AT_15 = 0.236
-RESOLUTION_REFERENCE_N = 15
-
-
-def null_loo_r2(n: int) -> float:
-    """Predicting the leave-one-out mean gives this, independent of the data."""
-    return 1.0 - (n / (n - 1)) ** 2
-
-
-def resolution_sd(n: int) -> float:
-    return RESOLUTION_SD_AT_15 * math.sqrt(RESOLUTION_REFERENCE_N / n)
-
-
-def _loo_r2(X_norm, X_phys, y, mean_spec, names, lowers, uppers, seed=73):
-    """Exact leave-one-out R2 for one objective, refitting the trend per fold.
-
-    The linear coefficients are refit inside every fold on the training rows only.
-    Fitting them once on everything and holding them fixed leaks the held-out value
-    into the trend and flatters the result.
-    """
-    n = len(y)
-    predictions = np.empty(n)
-    collapse_warnings: list[str] = []
-    for held in range(n):
-        keep = [i for i in range(n) if i != held]
-        target = y[keep]
-        module = None
-        if mean_spec is not None:
-            module, target = build_structured_mean(
-                X_phys[keep], y[keep], mean_spec, names, lowers, uppers
-            )
-        torch.manual_seed(seed)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            record = fit_model_variant(
-                torch.tensor(X_norm[keep], dtype=torch.double),
-                torch.tensor(target, dtype=torch.double).unsqueeze(-1),
-                sample_ids=tuple(range(len(keep))),
-                objective_names=("y",),
-                variant=DIM_SCALED_PRIOR,
-                seed=seed,
-                mean_module=module,
-            )
-        collapse_warnings.extend(
-            w.message for w in record.warnings if w.stage == SIGNAL_COLLAPSE_STAGE
-        )
-        gp = record.model.models[0]
-        gp.eval()
-        with torch.no_grad():
-            value = float(
-                gp.posterior(
-                    torch.tensor(X_norm[held : held + 1], dtype=torch.double)
-                ).mean.reshape(-1)[0]
-            )
-        # a log-response mean function means the model emits log(y)
-        predictions[held] = (
-            math.exp(value) if mean_spec is not None and mean_spec.response == "log" else value
-        )
-    ss_res = float(np.sum((y - predictions) ** 2))
-    ss_tot = float(np.sum((y - np.mean(y)) ** 2))
-    return 1.0 - ss_res / ss_tot, collapse_warnings
+# The fold loop lives in `mobo_kit.loocv`, shared with the round report and the
+# permutation test. It used to live here, and the moment a second caller needed it
+# there were two copies of a number this document calls canonical.
 
 
 def main() -> int:
@@ -252,12 +189,14 @@ def main() -> int:
         return 0
 
     # ----------------------------------------------------------------- model --
-    print(f"\n5. PER-OBJECTIVE VERDICT  (a mean function must beat plain by > {floor:.3f})")
-    design_names = [item["name"] for item in config["inputs"]]
-    lowers = np.array([float(i["start"]) for i in config["inputs"]])
-    uppers = np.array([float(i["stop"]) for i in config["inputs"]])
+    # The rule has two parts, and printing only the first one is what made the
+    # thickness verdict read as a dead end rather than as a question for a
+    # different instrument.
+    print("\n5. PER-OBJECTIVE VERDICT")
+    print(f"   (i)  the structured fit must beat the null, {null:+.4f}")
+    print(f"   (ii) if structured-vs-plain is inside the floor ({floor:.3f}), R2 cannot")
+    print("        decide and the RANK PERMUTATION adjudicates")
     X_phys = contents.inputs.to_numpy(float)
-    X_norm = normalise_inputs(config, X_phys)
 
     entries = config["objectives"]["specs"]
     for index, (name, entry) in enumerate(zip(names, entries)):
@@ -265,9 +204,10 @@ def main() -> int:
         mean_spec = mean_spec_from_config(entry)
         print(f"\n   {name}")
         try:
-            plain, plain_warnings = _loo_r2(
-                X_norm, X_phys, y, None, design_names, lowers, uppers
+            plain_loo = loo_predictions(
+                config, entry, X_phys, y, use_mean_function=False
             )
+            plain, plain_warnings = plain_loo.r2, plain_loo.collapse_warnings
             print(f"     plain GP             LOO R2 {plain:+.4f}")
         except ModelFitError as exc:
             print(f"     plain GP             REFUSED: {exc.cause}")
@@ -280,9 +220,9 @@ def main() -> int:
             continue
 
         try:
-            structured, structured_warnings = _loo_r2(
-                X_norm, X_phys, y, mean_spec, design_names, lowers, uppers
-            )
+            structured_loo = loo_predictions(config, entry, X_phys, y)
+            structured = structured_loo.r2
+            structured_warnings = structured_loo.collapse_warnings
             print(f"     with mean function   LOO R2 {structured:+.4f}")
         except ModelFitError as exc:
             print(f"     with mean function   REFUSED: {exc.cause}")
@@ -303,9 +243,13 @@ def main() -> int:
             print("     verdict              KEEP the mean function: it clears the")
             print("                          resolution floor and beats the null.")
         elif beats_null:
-            print("     verdict              INCONCLUSIVE: beats the null but the swing")
-            print("                          is inside the floor, so plain and structured")
-            print("                          are not distinguishable at this N.")
+            print("     verdict              INCONCLUSIVE ON R2: beats the null, but the")
+            print("                          swing is inside the floor, so R2 cannot")
+            print("                          resolve plain against structured at this N.")
+            print("                          That is not a verdict. Adjudicate on RANK,")
+            print("                          which is what the acquisition consumes:")
+            print("                            python scripts/permutation_rank_test.py \\")
+            print(f"                              --objective {name} --permutations 1800")
         else:
             features = ", ".join(f.column for f in mean_spec.features)
             print("     verdict              DELETE the mean function. It does not beat")

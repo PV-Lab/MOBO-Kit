@@ -60,9 +60,13 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
-import shap  # noqa: E402
+import shap  # noqa: E402  -- still used directly for summary_plot
 import torch  # noqa: E402
 
+from mobo_kit.attribution import (  # noqa: E402
+    expected_utility_fn,
+    shap_values_for,
+)
 from mobo_kit.campaign import (  # noqa: E402
     build_objective_transform,
     fit_campaign_models,
@@ -103,78 +107,6 @@ MEAN_FUNCTION_FEATURES = {
 # --------------------------------------------------------------------------- #
 # the function SHAP explains
 # --------------------------------------------------------------------------- #
-
-
-def expected_utility_fn(
-    model: Any,
-    config: Mapping[str, Any],
-    transform: ObjectiveTransform,
-    objective_index: int,
-    *,
-    batch_rows: int = 65536,
-):
-    """``X_phys -> E[utility]`` for one objective, batched and deterministic.
-
-    ``expected_transform`` rather than ``transform(mean)``: for thickness the
-    posterior is lognormal and the utility is a peaked Gaussian, so transforming
-    the mean is biased by Jensen's inequality and blind to the variance that a
-    target-seeking utility depends on.
-
-    ``batch_rows`` must stay ABOVE one KernelExplainer block, which is
-    ``coalitions x background rows`` -- 1022 x 23 = 23506 for a 23-point model.
-    Splitting a block is not merely twice the work: measured on this stack, the
-    same 23506 rows cost 0.03 s in one call and 0.59 s in two, a 20x penalty that
-    turned a 37 s attribution run into 470 s. Raise it if the background grows.
-    """
-
-    def f(X_phys: np.ndarray) -> np.ndarray:
-        values = np.atleast_2d(np.asarray(X_phys, dtype=float))
-        out = np.empty(values.shape[0], dtype=float)
-        model.eval()
-        with torch.no_grad():
-            for start in range(0, values.shape[0], batch_rows):
-                block = values[start : start + batch_rows]
-                X_norm = normalise_inputs(config, block)
-                posterior = model.posterior(
-                    torch.tensor(X_norm, dtype=torch.double),
-                    observation_noise=False,
-                )
-                utility = transform.expected_transform(
-                    posterior.mean, posterior.variance.clamp_min(0.0)
-                )
-                out[start : start + block.shape[0]] = (
-                    utility[..., objective_index].detach().cpu().double().numpy()
-                )
-        return out
-
-    return f
-
-
-def shap_values_for(
-    model: Any,
-    config: Mapping[str, Any],
-    transform: ObjectiveTransform,
-    objective_index: int,
-    background: np.ndarray,
-    instances: np.ndarray,
-    *,
-    seed: int,
-) -> np.ndarray:
-    """Exact Shapley values over the 10 campaign inputs.
-
-    ``KernelExplainer`` with the default sample budget enumerates **every** one of
-    the ``2**10 = 1024`` coalitions at this feature count, so the result is the
-    exact Shapley decomposition rather than a sampled approximation -- and is
-    therefore reproducible without depending on the seed. The seed is set anyway,
-    because that stops being true the moment anyone adds an eleventh input.
-    """
-    np.random.seed(int(seed))
-    f = expected_utility_fn(model, config, transform, objective_index)
-    explainer = shap.KernelExplainer(f, np.asarray(background, dtype=float))
-    values = explainer.shap_values(
-        np.asarray(instances, dtype=float), silent=True
-    )
-    return np.asarray(values, dtype=float)
 
 
 # --------------------------------------------------------------------------- #

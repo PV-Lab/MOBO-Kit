@@ -80,8 +80,35 @@ def test_the_resolution_floor_shrinks_with_n() -> None:
 
 def test_the_bootstrap_reference_is_the_measured_one() -> None:
     """0.236 was measured by parametric bootstrap at N=15, 4000 resamples. The
-    sqrt(15/N) rescaling is an approximation and the script says so."""
+    sqrt(15/N) rescaling is an approximation and the script says so.
+
+    The constants live in ``mobo_kit.loocv`` rather than in the script, because
+    the round report and the permutation test need the same ones. The script
+    re-exports them by importing, and this asserts they are the same objects
+    rather than two copies drifting apart.
+    """
+    from mobo_kit import loocv
+
     intake = _load("intake_new_data")
-    assert intake.RESOLUTION_SD_AT_15 == 0.236
-    assert intake.RESOLUTION_REFERENCE_N == 15
+    assert loocv.RESOLUTION_SD_AT_15 == 0.236
+    assert loocv.RESOLUTION_REFERENCE_N == 15
+    assert intake.RESOLUTION_SD_AT_15 is loocv.RESOLUTION_SD_AT_15
+    assert intake.resolution_sd is loocv.resolution_sd
+    assert intake.null_loo_r2 is loocv.null_loo_r2
     assert "estimate" in intake.__doc__ or "approximation" in intake.__doc__
+
+
+def test_the_report_and_the_intake_share_one_fold_loop() -> None:
+    """Not "they agree" -- they are the same function.
+
+    This project's canonical LOO numbers briefly had three implementations: the
+    intake script, the round report and the permutation test. Two of them agreeing
+    today is exactly the situation that produced its three silent-failure bugs.
+    """
+    from mobo_kit import loocv, round_report
+
+    intake = _load("intake_new_data")
+    permutation = _load("permutation_rank_test")
+    assert intake.loo_predictions is loocv.loo_predictions
+    assert permutation.loo_predictions is loocv.loo_predictions
+    assert round_report.loo_predictions is loocv.loo_predictions
