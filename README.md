@@ -184,7 +184,7 @@ scripts/   diagnostics, report figures, intake_new_data.py,
            dtlz2_parameter_sweep.py, plot_round_simulation.py,
            plot_shap_attribution.py, permutation_rank_test.py,
            generate_round_report.py
-tests/     575 tests
+tests/     578 tests
 launch_mobo_kit.bat, launch_mobo_kit.command   double-click entry points
 ```
 

@@ -31,6 +31,13 @@ on R2, which is a statement that R2 cannot resolve it at N=15 rather than a
 verdict; `scripts/permutation_rank_test.py` is the instrument that decides, and
 intake now says so when it lands there.
 
+**The launcher's DEFAULT_CONFIG is a product decision, not a constant.** It is the
+one path an experimentalist reaches by double-clicking, so it must track the
+ACTIVE campaign. Archiving a config without moving that line points the GUI at a
+retired contract, and the symptom is a missing-column error that reads as a broken
+workbook. That reached a user on 2026-08-18; the default is now pinned by a test,
+and a mismatch names the config, its status and the near-miss headers.
+
 ## Read these, in this order (~20 minutes)
 
 1. **`README.md`** — what the toolkit is, the three-round loop, current parameters,
@@ -48,7 +55,7 @@ Then verify the state yourself:
 pytest -q
 ```
 
-Expect **558 passed, 0 failed, 28 warnings** (~135 s). If that holds, everything
+Expect **578 passed, 0 failed, 28 warnings** (~180 s). If that holds, everything
 below is true. Six tests open a real tkinter window and drive it; they skip
 themselves when Tk will not start. Nothing in the suite needs a private workbook —
 the tests that would use one skip when it is absent.

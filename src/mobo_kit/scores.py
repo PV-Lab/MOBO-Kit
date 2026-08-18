@@ -597,9 +597,24 @@ class ScoreFinding:
     message: str
     column: str | None = None
 
+    @property
+    def is_column_level(self) -> bool:
+        """True when the finding is about a COLUMN rather than about one row.
+
+        ``row_position = -1`` is the marker. Rank agreement over fifteen rows and
+        an absent column are both statements about the sheet, not about a film.
+        """
+        return self.row_position < 0
+
     def __str__(self) -> str:
-        label = "?" if self.sample_id is None else self.sample_id
-        return f"[{self.severity.value}] sample {label}, {self.objective}: {self.message}"
+        # A column-level finding used to render as "sample ?", which reads as a
+        # row whose identity got lost rather than as a finding that has no row.
+        where = (
+            f"all rows, {self.objective}"
+            if self.is_column_level
+            else f"sample {self.sample_id}, {self.objective}"
+        )
+        return f"[{self.severity.value}] {where}: {self.message}"
 
 
 class ScoreValidationError(ValueError):

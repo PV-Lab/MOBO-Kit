@@ -65,7 +65,13 @@ __all__ = [
     "main",
 ]
 
-DEFAULT_CONFIG = "configs/campaign_d2d_perovskite.yaml"
+#: The ACTIVE campaign. This is the one path an experimentalist reaches by
+#: double-clicking, so it must never point at an archived contract: the launcher
+#: would then ask the new workbook for the previous campaign's columns and report
+#: it as a missing column, which reads as a broken workbook rather than as the
+#: config mismatch it is. That happened once, on 2026-08-18, between archiving
+#: campaign_d2d_perovskite.yaml and updating this line.
+DEFAULT_CONFIG = "configs/campaign_d2d_perovskite_test.yaml"
 
 #: Remembered between runs so the experimentalist browses to the workbook once.
 #: Kept in the user's home rather than the repo, so moving the checkout does not

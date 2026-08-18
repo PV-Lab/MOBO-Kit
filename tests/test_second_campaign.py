@@ -356,6 +356,88 @@ def test_constraints_are_inert_when_unconfigured(config) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# the launcher points at the campaign that is actually running
+# --------------------------------------------------------------------------- #
+
+
+def test_the_double_click_launcher_defaults_to_an_active_campaign() -> None:
+    """The regression that reached a user, 2026-08-18.
+
+    Archiving the first campaign's config without moving this line left the
+    double-click launcher reading the NEW workbook against the OLD contract. It
+    asked for `PL - Implied Voc (Max)`, which that workbook does not have, and
+    reported it as a missing column -- so an intact workbook looked broken.
+
+    The launcher is the one path an experimentalist reaches without writing code,
+    so its default is a product decision and not a constant.
+    """
+    from mobo_kit.launcher import DEFAULT_CONFIG
+
+    assert DEFAULT_CONFIG == CONFIG_PATH
+    assert load_campaign_config(DEFAULT_CONFIG)["campaign"]["status"] == "active"
+
+
+def test_reading_a_workbook_against_the_wrong_contract_says_which_contract() -> None:
+    """A column mismatch is almost never a broken workbook; it is a config
+    describing a different campaign. The message has to say so, because the
+    obvious reading of "missing column" sends someone to edit the sheet."""
+    from openpyxl import Workbook
+
+    from mobo_kit.workbook_io import CandidateSheetError, read_campaign_workbook
+
+    archived = load_campaign_config(ARCHIVED_CONFIG_PATH)
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "Sheet1"
+    # a v3-shaped sheet: the archived config wants "PL - Implied Voc (Max)"
+    sheet.append(["Sample number", VOC_HEADER])
+    sheet.append([1, 1.0])
+    import tempfile
+    from pathlib import Path as _Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _Path(tmp) / "Summary Table Test.xlsx"
+        book.save(path)
+        with pytest.raises(CandidateSheetError) as caught:
+            read_campaign_workbook(path, archived)
+
+    message = str(caught.value)
+    assert "archived" in message.lower()
+    assert "d2d-objectives-v2-nm-thickness" in message
+    # and it points at the column that is almost certainly the same measurement
+    assert "PL - Implied Voc (Max) Raw" in message
+
+
+def test_a_column_level_finding_does_not_pretend_to_have_a_row(config) -> None:
+    """`sample ?` reads as a row whose identity was lost. The rank-agreement
+    finding is about a column and says so."""
+    from mobo_kit.scores import ScoreFinding, ScoreSeverity
+
+    finding = ScoreFinding(
+        severity=ScoreSeverity.WARNING,
+        code="agreement_not_monotonic",
+        objective="optoelectronic",
+        row_position=-1,
+        sample_id=None,
+        message="ranks backwards",
+    )
+    assert finding.is_column_level
+    assert "sample ?" not in str(finding)
+    assert "all rows, optoelectronic" in str(finding)
+
+    per_row = ScoreFinding(
+        severity=ScoreSeverity.WARNING,
+        code="readings_disagree",
+        objective="thickness",
+        row_position=0,
+        sample_id=1,
+        message="readings disagree",
+    )
+    assert not per_row.is_column_level
+    assert "sample 1, thickness" in str(per_row)
+
+
+# --------------------------------------------------------------------------- #
 # the real workbook
 # --------------------------------------------------------------------------- #
 

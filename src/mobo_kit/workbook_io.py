@@ -180,6 +180,76 @@ def _header_positions(sheet) -> dict[str, int]:
     return positions
 
 
+def _near_misses(wanted: str, available: Sequence[str]) -> list[str]:
+    """Headers that are plausibly the same column under a different name.
+
+    Deliberately generous. The realistic cause of a missing column is not a typo
+    in the sheet but a config describing a DIFFERENT campaign, where the same
+    quantity was called something adjacent -- ``PL - Implied Voc (Max)`` against
+    ``PL - Implied Voc (Max) Raw``. Prefix and containment catch that; edit
+    distance would not, and would also match unrelated columns.
+    """
+    lowered = wanted.lower().strip()
+    head = lowered.split("(")[0].strip()
+    hits = [
+        name
+        for name in available
+        if name.lower().strip() != lowered
+        and (
+            lowered in name.lower()
+            or name.lower() in lowered
+            or (len(head) > 3 and name.lower().startswith(head))
+        )
+    ]
+    return hits[:4]
+
+
+def _missing_columns_message(
+    missing: Sequence[str],
+    positions: Mapping[str, int],
+    config: Mapping[str, Any],
+    path: Path,
+) -> str:
+    """Say which CONTRACT wanted the column, not just that it is absent.
+
+    "Sheet1 is missing required column(s)" reads as a broken workbook, and the
+    usual cause is the opposite: an intact workbook being read against another
+    campaign's config. Naming the config and offering the near-miss headers turns
+    a five-minute hunt into a glance.
+    """
+    campaign = config.get("campaign") or {}
+    contract = (config.get("objectives") or {}).get("contract_version")
+    lines = [
+        f"{SOURCE_SHEET} of {path.name} is missing column(s) that the campaign "
+        f"configuration requires: {list(missing)}.",
+        "",
+        f"Configuration: {campaign.get('name')} "
+        f"(status: {campaign.get('status')}, contract: {contract}).",
+    ]
+    if str(campaign.get("status")) == "archived":
+        lines += [
+            "",
+            "THAT CONFIGURATION IS ARCHIVED. It describes a previous campaign, "
+            "whose workbook had different columns, so this is almost certainly a "
+            "config/workbook mismatch rather than a problem with the workbook. "
+            "Point the launcher at the active campaign configuration instead.",
+        ]
+    suggestions = {
+        name: _near_misses(name, list(positions)) for name in missing
+    }
+    named = {name: hits for name, hits in suggestions.items() if hits}
+    if named:
+        lines += ["", "The sheet does have these, which look related:"]
+        for name, hits in named.items():
+            lines.append(f"  wanted {name!r} -> found {hits}")
+        lines += [
+            "",
+            "If one of those is the same measurement under a new name, the fix is "
+            "a `measurement` column in the config, not an edit to the workbook.",
+        ]
+    return "\n".join(lines)
+
+
 def read_campaign_workbook(
     path: str | Path, config: Mapping[str, Any]
 ) -> WorkbookContents:
@@ -210,9 +280,7 @@ def read_campaign_workbook(
     ]
     if missing:
         raise CandidateSheetError(
-            f"{SOURCE_SHEET} is missing required column(s): {missing}. "
-            "The optimizer computes the objectives from these, so it cannot "
-            "proceed without them."
+            _missing_columns_message(missing, positions, config, Path(path))
         )
 
     rows = []
