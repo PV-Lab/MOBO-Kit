@@ -354,7 +354,8 @@ def test_hypervolume_is_recorded_at_all_three_stages(cell) -> None:
 
 def test_manifest_row_has_exactly_the_declared_columns(cell) -> None:
     row = prs.manifest_row(
-        cell, condition_id=1, arm="both", seed=SEED, baseline_unencoded=0.004659
+        cell, condition_id=1, arm="both", seed=SEED, baseline_unencoded=0.004659,
+        hv_r0_measured=0.79
     )
     assert tuple(row) == prs.MANIFEST_COLUMNS
     frame = pd.DataFrame([row], columns=list(prs.MANIFEST_COLUMNS))
@@ -372,7 +373,8 @@ def test_the_manifest_carries_the_baseline_tripwire(cell) -> None:
     assertion that can only ever fail.
     """
     row = prs.manifest_row(
-        cell, condition_id=1, arm="both", seed=SEED, baseline_unencoded=0.004659
+        cell, condition_id=1, arm="both", seed=SEED, baseline_unencoded=0.004659,
+        hv_r0_measured=0.79
     )
     assert row["baseline_hv_reported_by_r1"] == pytest.approx(
         row["baseline_hv_independent"], rel=1e-9

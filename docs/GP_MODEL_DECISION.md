@@ -3,8 +3,10 @@
 Measured 2026-07-28 on the corrected `Summary Table.xlsx` (15 R0 observations,
 10 inputs). Reproduce with `python scripts/gp_diagnostic.py`.
 
-> **This document is about the FIRST campaign's objective contract,
-> `d2d-objectives-v2-nm-thickness`, and is kept as its record.** A second campaign
+> **This document is about the FIRST campaign, which was ALGORITHM TESTING.**
+> Its contract was `d2d-objectives-v2-nm-thickness` and its data existed to
+> prove the loop worked rather than to run an experiment; it is kept as that
+> record. A second campaign
 > opened on 2026-08-17 with a new contract (`d2d-objectives-v3-test`) on a new
 > workbook: uniformity became a mean rather than a product and optoelectronic a
 > mean of normalised terms rather than a log10 product, so **no LOO R², signal

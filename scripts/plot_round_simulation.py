@@ -114,8 +114,12 @@ BLUE_RAMP = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "
 SEQ = LinearSegmentedColormap.from_list("seq_blue", BLUE_RAMP)
 SPINE = "#d8d7d2"
 
+# R0 here is the REAL measured recipes re-scored by the oracle, not an LHS draw.
+# The label said "R0 LHS" because Annie's branch generated a fresh LHS start; this
+# script deliberately uses the measured recipes so the whole loop lives on one
+# landscape, and the legend has to say which of those two a reader is looking at.
 ROUND_STYLE = {
-    "R0": (R0_COLOR, "R0 LHS (GP_exp scored)"),
+    "R0": (R0_COLOR, "R0 measured recipes (oracle-scored)"),
     "R1": (R1_COLOR, "R1 simulated"),
     "R2": (R2_COLOR, "R2 simulated"),
 }
@@ -654,6 +658,7 @@ MANIFEST_COLUMNS: tuple[str, ...] = (
     "r1_boundary_coords_per_condition",
     "r2_boundary_coords_per_condition",
     "hv_r0",
+    "hv_r0_measured",
     "hv_r0_r1",
     "hv_r0_r1_r2",
     "hv_gain_r1",
@@ -678,6 +683,7 @@ def manifest_row(
     arm: str,
     seed: int,
     baseline_unencoded: float,
+    hv_r0_measured: float,
 ) -> dict[str, Any]:
     r1_validity = cell["r1"].diagnostics["validity"]
     r2_validity = cell["r2"].diagnostics["validity"]
@@ -701,6 +707,13 @@ def manifest_row(
             r2_validity["boundary_coords_per_condition"]
         ),
         "hv_r0": cell["hv"]["R0"],
+        # The same 15 recipes scored by the workbook rather than by the oracle.
+        # Both numbers belong in the manifest: every simulated round is scored
+        # by the oracle, so hv_r0 is the baseline the simulation actually used,
+        # and hv_r0_measured is what the campaign starts from. They are close
+        # but not equal, and a reader comparing a simulated trajectory against
+        # a live round needs to know which one they are holding.
+        "hv_r0_measured": hv_r0_measured,
         "hv_r0_r1": cell["hv"]["R0+R1"],
         "hv_r0_r1_r2": cell["hv"]["R0+R1+R2"],
         "hv_gain_r1": cell["hv"]["R0+R1"] - cell["hv"]["R0"],
@@ -984,6 +997,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     Y_r0_oracle = oracle_predict(oracle, config, X_r0, transform)
     baseline_unencoded = _unencoded_baseline(Y_r0_oracle)
+    hv_r0_measured = hypervolume(Y_r0_measured, transform, reference)
 
     print("\n   R1 observed baseline hypervolume")
     print(f"     on the oracle-scored R0 this sweep uses : "
@@ -1060,6 +1074,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         rows.append(manifest_row(
             cell, condition_id=position, arm=arm, seed=seed,
             baseline_unencoded=baseline_unencoded,
+            hv_r0_measured=hv_r0_measured,
         ))
         elapsed = time.time() - cell_started
         print(

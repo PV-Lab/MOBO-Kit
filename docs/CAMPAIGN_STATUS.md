@@ -3,7 +3,7 @@
 Snapshot for collaborators. The full loop runs: R0 LHS -> R1 UCB-HVI (5) ->
 R2 qLogNEHVI (3), three replicate films per condition, 23 distinct conditions.
 
-## Second campaign (test data), from 2026-08-17 — READ THIS FIRST
+## The live campaign, from 2026-08-17 — READ THIS FIRST
 
 **A second dataset arrived and it runs a different objective contract.** Two of
 the three objectives are computed differently, the workbook's columns moved, two
@@ -11,7 +11,7 @@ grids changed, and this project's first real constraints are active. Everything
 below this section describes the FIRST campaign unless it says otherwise, and its
 numbers are about that contract.
 
-| | first campaign | second campaign |
+| | first — algorithm testing | second — **the live campaign** |
 |---|---|---|
 | config | `configs/campaign_d2d_perovskite.yaml` (**archived**) | `configs/campaign_d2d_perovskite_test.yaml` |
 | contract | `d2d-objectives-v2-nm-thickness` | `d2d-objectives-v3-test` |
@@ -83,10 +83,18 @@ floor, the permutation decides.
 
 ### Are beta = 36 and radius = 0.35 defensible?
 
+**The live campaign runs beta = 36 and radius = 0.35.** They were determined by a
+sweep over two instruments on the campaign's own data — per-round utility **box
+plots**, and **heat maps**, which are 2-D slices through the higher-dimensional
+Gaussian-process model — across **beta from 9 to 49** (9, 25, 36, 49) and **radius
+from 0.05 to 0.45** (nine values, step 0.05), three starting designs per cell at
+production settings. **Note that local penalization is inert at the current beta**;
+the measured consequences are below. Outputs stay local (`local_outputs/`): they
+are how the group picks a setting, not a result about the chemistry, and they are
+not part of what this repository publishes.
+
 **They are a declared policy choice, not a measured optimum, and the distinction
-matters.** The group chose them with Aleks from the 108-cell β×r sweep
-(`local_outputs/boxplot_sweep`, 3 trials × 4 betas × 9 radii at production
-settings). That sweep **could not rank cells**: the whole spread across betas was
+matters.** That sweep **could not rank cells**: the whole spread across betas was
 0.0065 against a trial-to-trial sd of 0.010–0.027, and the best cell was a
 different (β, r) in every trial. It also scored candidates against a *noiseless
 GP oracle of the same model class the optimiser fits*, so the landscape held no
@@ -255,6 +263,17 @@ far more likely to be wrong than the film is.
 draws until it has the requested pool size, so a mis-specified constraint produces
 a normal-looking pool drawn from a sliver of the space, and the survival rate is
 the only place that shows.
+
+## Everything below this line is about the FIRST campaign
+
+> **The first campaign was algorithm testing.** Its 15 rows and its
+> `d2d-objectives-v2-nm-thickness` contract existed to prove the loop worked, not
+> to run an experiment. The sections below are its record and its numbers are
+> about *its* objectives — uniformity as a product, optoelectronic as a log10
+> product — which the live campaign redefined. **Nothing here transfers unless it
+> is method rather than measurement.** Where a mechanism still applies (how a
+> round runs, what `Y_model` must contain, the acceptance test) it applies to
+> both; where a fitted number appears, it is the first campaign's.
 
 ## Running a round
 
@@ -479,6 +498,10 @@ Two conventions that fail *silently* if got wrong, both now covered:
   trusting the result.
 
 ## The numbered issues -- read before trusting a batch
+
+**Issues 1-9 are the first campaign's**, kept because each one's evidence is the
+reason a decision holds and because several are the sort of thing that gets
+rediscovered and re-argued. **Issue 10 is the live campaign's and is open.**
 
 Kept numbered and in place even once closed, because each one's *evidence* is the
 reason a decision holds, and because several are the sort of thing that gets
@@ -861,7 +884,11 @@ photoconductance formula (issue 10), and a decision about whether an
 `anneal_temp` floor belongs in `constraints:` — which is now a live list rather
 than an empty one, so adding it is a two-line change.
 
-## Are beta = 4.0 and radius = 0.25 defensible?
+## Are beta = 4.0 and radius = 0.25 defensible? (FIRST campaign)
+
+> Superseded for the live campaign by "Are beta = 36 and radius = 0.35
+> defensible?" near the top of this document. Kept as the record of how the first
+> campaign's defaults were checked.
 
 `scripts/dtlz2_parameter_sweep.py`, 8 seeds per cell, `min_batch_distance` fixed at
 0.15. Metric is mean hypervolume gain over the R0 start for the 8 points R1 and R2

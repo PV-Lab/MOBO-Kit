@@ -1,5 +1,14 @@
 # Round simulation: Annie's branch → `colin`
 
+> **This document describes the FIRST campaign, which was algorithm testing.**
+> Its data and workbook (`Summary Table.xlsx`, contract
+> `d2d-objectives-v2-nm-thickness`) existed to validate the toolkit, not to run an
+> experiment. **The real campaign is the second one** --
+> `configs/campaign_d2d_perovskite_test.yaml` on `Summary Table Test.xlsx`,
+> contract `d2d-objectives-v3-test`. Two of the three objectives are computed
+> differently there, so **no number below transfers**; they describe quantities
+> that were redefined. Start from `docs/CAMPAIGN_STATUS.md` for the live campaign.
+
 For Annie Xu. This is a review of `examples/round_simulations.py` on
 `annie/ax_plots_simulation` against the current `colin` branch, and a record of
 what `scripts/plot_round_simulation.py` changed and why.

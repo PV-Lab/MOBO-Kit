@@ -21,6 +21,22 @@ off several objectives at once, for problems with more than two inputs and more
 than two outputs. Developed across the University of Washington, UC San Diego and
 MIT, and demonstrated on slot-die coated perovskite films.
 
+## Two campaigns in this repository
+
+| | first — algorithm testing | second — **the live campaign** |
+|---|---|---|
+| config | `configs/campaign_d2d_perovskite.yaml` (**archived**) | `configs/campaign_d2d_perovskite_test.yaml` |
+| contract | `d2d-objectives-v2-nm-thickness` | `d2d-objectives-v3-test` |
+| workbook | `Summary Table.xlsx` | `Summary Table Test.xlsx` |
+| purpose | validating the toolkit end to end | the experiment being run |
+
+The first campaign's data existed to check that the loop worked, and it is kept as
+a record rather than deleted — `docs/GP_MODEL_DECISION.md` and the other
+banner-marked documents describe it. **Two of the three objectives are computed
+differently in the second campaign**, so none of the first campaign's fitted
+numbers carry over; they are about quantities that were redefined. The launcher
+and every script default to the live campaign.
+
 ## The campaign loop
 
 A campaign runs in three rounds. Each proposed condition is run in triplicate so
@@ -128,20 +144,32 @@ every seed, which is the honest expectation for 8 added points in 10 dimensions.
 `python scripts/plot_dtlz2_report.py` renders the round-by-round GP fit,
 uncertainty, acquisition surface and selected batch.
 
-The two tuned parameters were checked the same way. `scripts/dtlz2_parameter_sweep.py`
-sweeps `beta` against the local-penalization `radius`, 8 seeds per cell, under a
-decision rule written before the numbers existed — and the answer was to keep
-`beta = 4.0` and `radius = 0.25`, because the whole grid is flat within one
-per-seed standard deviation. That is the outcome that says a default was not a
-lucky pick.
+## How beta and radius were chosen
 
-The **second campaign runs `beta = 36`, `radius = 0.35`**, chosen by the group from
-a 108-cell sweep against a frozen GP oracle (`scripts/plot_boxplot_sweep.py`). That
-is a declared policy choice about how much to explore rather than a measured
-optimum: the spread across betas there was 0.0065 against a trial-to-trial sd of
-0.010–0.027, and the oracle — noiseless, and the same model class the optimiser
-fits — systematically undervalues exploration. Heavy exploration is the right
-posture when two of three objectives carry no learnable signal.
+The live campaign runs **beta = 36** and **radius = 0.35**. They were determined
+by a sweep over two instruments on the campaign's own data: per-round utility
+**box plots** across a grid of **beta from 9 to 49** and **radius from 0.05 to
+0.45**, and **heat maps** -- 2-D slices through the higher-dimensional
+Gaussian-process model -- at the same cells. `scripts/plot_boxplot_sweep.py` and
+`scripts/plot_round_simulation.py` produce them; the outputs stay local, because
+they are how the group picks a setting rather than a result about the chemistry.
+
+Two things to know before quoting that choice.
+
+**The sweep could not rank the cells.** The whole spread across betas was 0.0065
+against a trial-to-trial standard deviation of 0.010--0.027, and the best cell was
+a different (beta, radius) in every trial. So this is a declared policy about how
+much to explore -- heavy exploration, since two of the three objectives carry no
+learnable signal -- and not a measured optimum.
+
+**Local penalization is inert at this beta.** Achieved minimum batch spacing is
+1.091, about three times the 0.35 radius, so the knob has nothing to act on. That
+is expected: the sweep showed radius binding less as beta rises. It also means the
+batch runs to the edges of the input ranges, which is worth checking before
+fabricating.
+
+`docs/CAMPAIGN_STATUS.md` carries the full record, including the two triggers for
+revisiting the choice.
 
 ## Repository layout
 
@@ -184,7 +212,7 @@ scripts/   diagnostics, report figures, intake_new_data.py,
            dtlz2_parameter_sweep.py, plot_round_simulation.py,
            plot_shap_attribution.py, permutation_rank_test.py,
            generate_round_report.py
-tests/     578 tests
+tests/     580 tests
 launch_mobo_kit.bat, launch_mobo_kit.command   double-click entry points
 ```
 
@@ -259,16 +287,6 @@ constraints:
   - sum_upper_strict: {lhs: anti_time, rhs: [time_1, time_2]}
   # and if it happens, it runs for at least 10 s
   - nonzero_minimum: {column: time_2, minimum: 10}
-```
-
-## History
-
-The Step 1 / 2A / 2B / 2C audit apparatus was removed from this branch on
-2026-07-29, once its findings were recorded in `docs/GP_MODEL_DECISION.md`. It
-validated a GP model that has since been replaced. To recover any of it:
-
-```bash
-git show pre-cleanup-2026-07-29:src/mobo_kit/<file>.py
 ```
 
 ## License

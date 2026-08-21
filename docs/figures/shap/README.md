@@ -1,5 +1,14 @@
 # SHAP attribution figures
 
+> **This document describes the FIRST campaign, which was algorithm testing.**
+> Its data and workbook (`Summary Table.xlsx`, contract
+> `d2d-objectives-v2-nm-thickness`) existed to validate the toolkit, not to run an
+> experiment. **The real campaign is the second one** --
+> `configs/campaign_d2d_perovskite_test.yaml` on `Summary Table Test.xlsx`,
+> contract `d2d-objectives-v3-test`. Two of the three objectives are computed
+> differently there, so **no number below transfers**; they describe quantities
+> that were redefined. Start from `docs/CAMPAIGN_STATUS.md` for the live campaign.
+
 Six figures from one run of `scripts/plot_shap_attribution.py`, seed 73, 1,000
 on-grid instances. Schema and reading notes: `docs/SHAP_SUMMARY.md`.
 
