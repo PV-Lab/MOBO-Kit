@@ -53,12 +53,13 @@ def config() -> dict:
 
 
 def test_the_new_contract_is_distinct_from_the_archived_one(config) -> None:
-    """Two live configs, and utility space must not be confused between them.
+    """Every contract's utility space is its own, and they must not be confused.
 
-    Uniformity is a three-term mean here and a three-term product there;
+    Uniformity is a three-term mean here and a three-term product in v2;
     optoelectronic is a mean of normalised values here and a log10 product there.
-    A shared contract_version would make hypervolumes from the two campaigns look
-    comparable when they measure different spaces.
+    A shared contract_version would make hypervolumes look comparable when they
+    measure different spaces. v3 is itself archived now -- superseded by v4 -- so
+    all that is asserted here is that the three versions are distinct.
     """
     archived = load_campaign_config(ARCHIVED_CONFIG_PATH)
     assert config["objectives"]["contract_version"] == "d2d-objectives-v3-test"
@@ -67,7 +68,7 @@ def test_the_new_contract_is_distinct_from_the_archived_one(config) -> None:
         != archived["objectives"]["contract_version"]
     )
     assert archived["campaign"]["status"] == "archived"
-    assert config["campaign"]["status"] == "active"
+    assert config["campaign"]["status"] == "archived"
     # objective ORDER is part of the contract: Y columns are positional
     assert objective_names(config) == ("uniformity", "optoelectronic", "thickness")
 
@@ -360,20 +361,20 @@ def test_constraints_are_inert_when_unconfigured(config) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_the_double_click_launcher_defaults_to_an_active_campaign() -> None:
-    """The regression that reached a user, 2026-08-18.
+def test_this_contract_is_archived_and_the_launcher_has_moved_on() -> None:
+    """v3 was the DRY RUN -- it rehearsed this contract's shape on a workbook
+    literally called "Test". The live campaign is v4, and the launcher points
+    there; the pinning of that default lives in `test_final_campaign.py`.
 
-    Archiving the first campaign's config without moving this line left the
-    double-click launcher reading the NEW workbook against the OLD contract. It
-    asked for `PL - Implied Voc (Max)`, which that workbook does not have, and
-    reported it as a missing column -- so an intact workbook looked broken.
-
-    The launcher is the one path an experimentalist reaches without writing code,
-    so its default is a product decision and not a constant.
+    The 2026-08-18 regression this guards against is unchanged in kind: archiving
+    a config without moving the launcher's default leaves the double-click path
+    reading a new workbook against a retired contract, which surfaces as a
+    missing-column error on an intact workbook.
     """
     from mobo_kit.launcher import DEFAULT_CONFIG
 
-    assert DEFAULT_CONFIG == CONFIG_PATH
+    assert load_campaign_config(CONFIG_PATH)["campaign"]["status"] == "archived"
+    assert DEFAULT_CONFIG != CONFIG_PATH
     assert load_campaign_config(DEFAULT_CONFIG)["campaign"]["status"] == "active"
 
 

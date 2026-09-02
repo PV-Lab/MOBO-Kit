@@ -81,6 +81,7 @@ import pandas as pd
 
 __all__ = [
     "AgreementCheck",
+    "FormulaFingerprint",
     "CrossCheck",
     "MeasurementInput",
     "MeasurementResult",
@@ -189,6 +190,15 @@ def _mean_of_present(values: Sequence[float]) -> float:
     return math.fsum(values) / len(values)
 
 
+def _single(values: Sequence[float]) -> float:
+    """The one value, unchanged. Guarded because 'stored' means exactly one column."""
+    if len(values) != 1:
+        raise _NotNumeric(
+            f"the 'stored' recipe takes exactly one column; got {len(values)}."
+        )
+    return float(values[0])
+
+
 RECIPES: Mapping[str, _Recipe] = {
     recipe.name: recipe
     for recipe in (
@@ -205,6 +215,30 @@ RECIPES: Mapping[str, _Recipe] = {
         # answer a different question. `mean_of_present` is for repeated readings
         # of one quantity, where three instead of four is a normal film.
         _Recipe("mean", _mean_of_present, True, "the mean of every input"),
+        # The FROZEN objective. `stored` takes the workbook's own score column as
+        # the objective value and computes nothing, which is a deliberate reversal
+        # of this module's usual polarity -- normally Python computes and the
+        # stored cell is demoted to a cross-check.
+        #
+        # It exists because the group is still revising how uniformity and
+        # optoelectronic are defined. Reimplementing a formula that is about to
+        # change means the code and the sheet disagree at exactly the moment
+        # someone edits the sheet, and the disagreement would look like a bug in
+        # whichever one was checked second. Reading the value instead makes the
+        # workbook the single source of truth while the definition moves.
+        #
+        # What is LOST by freezing, and is worth saying out loud: there is no
+        # independent recomputation of these two objectives under this contract,
+        # so a stale pasted literal in the score column cannot be detected by
+        # comparing it against anything. `formula_fingerprint` is the partial
+        # replacement -- it notices when the DEFINITION moves, not when a value
+        # goes stale.
+        _Recipe(
+            "stored",
+            _single,
+            True,
+            "the workbook's own score column, taken as computed and not recomputed",
+        ),
         _Recipe(
             "mean_of_present",
             _mean_of_present,
@@ -386,6 +420,54 @@ class AgreementCheck:
 
 
 @dataclass(frozen=True)
+class FormulaFingerprint:
+    """The formula text a frozen score column is expected to carry.
+
+    A ``stored`` objective is read rather than recomputed, so nothing in Python
+    knows what it means.  That is the point -- the group is still revising the
+    definition -- but it removes the cross-check that would otherwise catch a
+    redefinition.  This is the partial replacement: record the formula as it
+    stands, and say so when it changes.
+
+    **It notices a changed definition, not a stale value.**  A pasted literal that
+    has stopped tracking its inputs looks identical to a correct one from here.
+    That gap is inherent to freezing and is recorded rather than papered over; it
+    closes when the group settles the formulas and the recipes are unfrozen.
+
+    Compared after collapsing whitespace and upper-casing, because Excel rewrites
+    those freely, and with the row number stripped so one fingerprint covers every
+    row rather than fifteen near-copies.
+    """
+
+    column: str
+    formula: str
+
+    def __post_init__(self) -> None:
+        for field in ("column", "formula"):
+            value = getattr(self, field)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"A formula fingerprint needs a non-empty {field!r}.")
+            object.__setattr__(self, field, value.strip())
+
+    @staticmethod
+    def canonical(formula: Any) -> str:
+        """Row-independent, whitespace-independent form of a formula string."""
+        import re
+
+        if not isinstance(formula, str):
+            return ""
+        text = formula.strip().lstrip("=").upper()
+        text = re.sub(r"\s+", "", text)
+        # A2 -> A, AJ17 -> AJ: the same formula copied down a column differs only
+        # in the row, and fingerprinting per row would report fifteen changes for
+        # one edit.
+        return re.sub(r"(\$?[A-Z]{1,3})\$?\d+", r"\1", text)
+
+    def matches(self, formula: Any) -> bool:
+        return self.canonical(formula) == self.canonical(self.formula)
+
+
+@dataclass(frozen=True)
 class MeasurementSpec:
     """How one objective's model input is computed and checked."""
 
@@ -395,6 +477,8 @@ class MeasurementSpec:
     cross_checks: tuple[CrossCheck, ...] = ()
     #: Rank agreement between a supplied normalised column and its raw source.
     agreement_check: "AgreementCheck | None" = None
+    #: Expected formula text for a frozen score column; checked, never evaluated.
+    formula_fingerprint: "FormulaFingerprint | None" = None
     #: Columns holding readings the operator judged anomalous.  They never enter
     #: the recipe; their presence is recorded so an exclusion is visible rather
     #: than silent.
@@ -415,6 +499,11 @@ class MeasurementSpec:
             )
         if not self.inputs:
             raise ValueError(f"Objective {self.name!r} declares no measurement inputs.")
+        if self.recipe == "stored" and len(self.inputs) != 1:
+            raise ValueError(
+                f"Objective {self.name!r} uses the 'stored' recipe, which reads one "
+                f"score column; it declares {len(self.inputs)} inputs."
+            )
         columns = [item.column for item in self.inputs]
         duplicates = sorted({c for c in columns if columns.count(c) > 1})
         if duplicates:
@@ -443,10 +532,16 @@ class MeasurementSpec:
 
     @property
     def optional_columns(self) -> tuple[str, ...]:
-        # The agreement check's raw column is offered but never required: a row
-        # without it simply does not contribute to the rank comparison, and the
-        # objective is computed from the normalised column either way.
-        agreement = (self.agreement_check.raw,) if self.agreement_check else ()
+        # BOTH of the agreement check's columns are offered but never required.
+        # It used to list only `raw`, on the assumption that `normalized` was an
+        # input to the recipe -- true while optoelectronic was computed, false the
+        # moment it was frozen and its only input became the score column. The
+        # check then silently reported "column absent" on a sheet that had it.
+        agreement = (
+            (self.agreement_check.raw, self.agreement_check.normalized)
+            if self.agreement_check
+            else ()
+        )
         if self.recipe_impl.requires_all:
             return tuple(self.excluded) + agreement
         return (
@@ -526,6 +621,17 @@ def measurement_spec_from_config(entry: Mapping[str, Any]) -> MeasurementSpec | 
         for item in raw_excluded
     )
 
+    raw_fingerprint = block.get("formula_fingerprint")
+    if raw_fingerprint is None:
+        fingerprint = None
+    elif isinstance(raw_fingerprint, Mapping):
+        fingerprint = FormulaFingerprint(
+            column=str(raw_fingerprint["column"]),
+            formula=str(raw_fingerprint["formula"]),
+        )
+    else:
+        raise ValueError("measurement.formula_fingerprint must be a mapping.")
+
     raw_agreement = block.get("agreement_check")
     if raw_agreement is None:
         agreement = None
@@ -546,6 +652,7 @@ def measurement_spec_from_config(entry: Mapping[str, Any]) -> MeasurementSpec | 
         inputs=tuple(inputs),
         cross_checks=tuple(checks),
         agreement_check=agreement,
+        formula_fingerprint=fingerprint,
         excluded=excluded,
         spread_warning_ratio=None if ratio is None else float(ratio),
     )

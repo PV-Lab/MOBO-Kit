@@ -1,6 +1,6 @@
 """Render a round's figures from a terminal, exactly as the launcher does.
 
-    python scripts/generate_round_report.py --workbook "local_inputs/Summary Table Test.xlsx"
+    python scripts/generate_round_report.py --workbook "local_inputs/Final Summary Table.xlsx"
     python scripts/generate_round_report.py --workbook <path> --data-only
 
 Two modes, matching the two buttons:
@@ -78,7 +78,7 @@ def _worklist_drift(workbook, config, round_name: str, proposal) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workbook", required=True)
-    parser.add_argument("--config", default="configs/campaign_d2d_perovskite_test.yaml")
+    parser.add_argument("--config", default="configs/campaign_d2d_perovskite_final.yaml")
     parser.add_argument("--outdir", default=None)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument(

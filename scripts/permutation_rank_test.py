@@ -153,8 +153,8 @@ def _rho(state: Mapping[str, Any], y: np.ndarray, *, seed: int) -> float:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="configs/campaign_d2d_perovskite_test.yaml")
-    parser.add_argument("--workbook", default="local_inputs/Summary Table Test.xlsx")
+    parser.add_argument("--config", default="configs/campaign_d2d_perovskite_final.yaml")
+    parser.add_argument("--workbook", default="local_inputs/Final Summary Table.xlsx")
     parser.add_argument("--objective", default="thickness")
     parser.add_argument("--permutations", type=int, default=1800)
     parser.add_argument("--seed", type=int, default=0)

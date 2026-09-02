@@ -3,15 +3,138 @@
 Snapshot for collaborators. The full loop runs: R0 LHS -> R1 UCB-HVI (5) ->
 R2 qLogNEHVI (3), three replicate films per condition, 23 distinct conditions.
 
-## The live campaign, from 2026-08-17 — READ THIS FIRST
+## The live campaign: contract v4, from 2026-09-02 — READ THIS FIRST
 
-**A second dataset arrived and it runs a different objective contract.** Two of
-the three objectives are computed differently, the workbook's columns moved, two
-grids changed, and this project's first real constraints are active. Everything
-below this section describes the FIRST campaign unless it says otherwise, and its
-numbers are about that contract.
+**The final workbook arrived and the score contract moved again.** Uniformity and
+optoelectronic were renormalised a second time, and the group's decision this time
+is to **freeze them**: read the workbook's own score columns and compute nothing.
 
-| | first — algorithm testing | second — **the live campaign** |
+| | v2 — algorithm testing | v3 — dry run | v4 — **live** |
+|---|---|---|---|
+| config | `campaign_d2d_perovskite.yaml` (archived) | `campaign_d2d_perovskite_test.yaml` (archived) | `campaign_d2d_perovskite_final.yaml` |
+| contract | `d2d-objectives-v2-nm-thickness` | `d2d-objectives-v3-test` | `d2d-objectives-v4-final` |
+| workbook | `Summary Table.xlsx` | `Summary Table Test.xlsx` | `Final Summary Table.xlsx` |
+| sheet | `Sheet1` | `Sheet1` | **`R0`** |
+| uniformity | `Coverage * (1-Uniformity) * Phase purity` | `mean(...)` computed | **read from AJ** |
+| optoelectronic | `log10(Voc * Photoconductance)` | `mean(...)` computed | **read from AK** |
+| thickness | computed from `T1..T4`, nm | unchanged | unchanged, readings now AC–AG |
+
+### The freeze, and what it costs
+
+Uniformity and optoelectronic use a new `stored` recipe: the workbook's score
+column *is* the objective value, with no recomputation. **This reverses this
+project's usual polarity**, which is "Python computes and the stored cell is
+demoted to a cross-check".
+
+**Why.** Both objectives have now been renormalised twice and the group is still
+revising them. Reimplementing a formula that is about to change means the code and
+the sheet disagree at exactly the moment someone edits the sheet, and the
+disagreement looks like a bug in whichever was checked second. Reading the value
+makes the workbook the single source of truth while the definition moves.
+
+**What it costs, stated plainly because it is the cross-check this project
+otherwise insists on:** there is **no independent recomputation** of these two
+objectives, so a stale pasted literal in AJ or AK cannot be caught by comparing it
+against anything. Intake and every round report print that in one line.
+
+**What partly replaces it: `formula_fingerprint`.** The config records the formula
+text of each frozen column, and the read compares it — reading the formula, never
+evaluating it. Recorded on 2026-09-02:
+
+| column | recorded formula |
+|---|---|
+| AJ uniformity | `=(L2+O2+P2)/3` |
+| AK optoelectronic | `=(S2+((0.75*Y2)+(0.25*AB2)))/2` |
+| AH thickness (avg) | `=AVERAGE(AC2:AF2)` (cross-checked, not frozen) |
+
+Comparison is row- and whitespace-independent, so one fingerprint covers all
+fifteen rows. **It notices a changed definition, not a stale value** — that gap is
+inherent to freezing and is asserted by a test so nobody later mistakes the
+fingerprint for a value check. A score column holding literals rather than
+formulas is flagged too, since that is the one failure this contract cannot see.
+
+**Unfreezing is a config edit, not a rebuild.** The v3 recipes (`mean`,
+`clamped_complement`, `capped_ratio`) stay in `scores.py`, unwired and tested. When
+the group settles the formulas, swap the recipe back and bump `contract_version`.
+
+### The sheet is `R0` now
+
+The workbook names its sheets by round, so the source sheet became a config key,
+`campaign.source_sheet`. Older contracts declare nothing and default to `Sheet1`.
+
+**The workbook's own `R1` sheet is deliberately not read.** The round contract is
+unchanged: each round's worklist is written to a NEW file beside the workbook and
+filled in there, and the source workbook is never opened for writing.
+
+### What the final data supports
+
+`scripts/intake_new_data.py`, exact leave-one-out, null −0.1480 at N=15,
+resolution floor ±0.236:
+
+| objective | plain GP | with mean function | verdict |
+|---|---:|---:|---|
+| uniformity | **−0.4778** | — | below the null, **exploration only** |
+| optoelectronic | **−0.7038** | — | below the null, **exploration only** |
+| thickness | **+0.5814** | **+0.7422** | **learnable**; swing +0.1608, inside the floor |
+
+All 15 rows are on-grid, all satisfy all three constraints, and both anchors hold
+(uniformity 0.599–0.882, optoelectronic 0.477–0.762). Sample 2 was
+`speed_2 = 0, time_2 = 60` in an earlier draft — which breaks the first constraint
+— and the group corrected it to `time_2 = 0`.
+
+**Thickness keeps its mean function, on the rank permutation.** Intake leaves it
+*inconclusive on R²* — the +0.1608 swing sits inside the ±0.236 floor, which is a
+statement that R² cannot resolve it at N=15 rather than a verdict.
+`scripts/permutation_rank_test.py` adjudicated on 2026-09-02:
+
+| | value |
+|---|---:|
+| observed rank ρ | **+0.6500** |
+| null mean (sd) | −0.1892 (0.2944) |
+| exceedances | **9 of 1800** |
+| p | **0.0056**, 95% CI [0.0021, 0.0090] |
+
+v3's p was 0.0028 on its own rows; that verdict did not transfer and this one was
+measured fresh. **Rank is the right statistic because rank is what the acquisition
+consumes** — it never sees R². **Do not quote the +0.1608 swing as evidence.**
+
+**Issue 10 is CLOSED.** The v3 photoconductance normalisation ranked backwards
+against its own raw measurement (Spearman −0.5484, p = 0.0343). On v4 the same
+comparison gives **+1.0000**. The diagnostic stays on because the failure is
+silent when it recurs.
+
+### The knob decision: keep beta = 36
+
+The revisit trigger recorded under v3 was "when the photoconductance
+normalisation is fixed and optoelectronic may become learnable". **It fired, and
+the answer is to keep the knob.**
+
+`beta = 36` was chosen because two of three objectives carried no learnable signal,
+which makes heavy exploration the right posture. On v4, still **only thickness
+beats the null** — optoelectronic is in fact further below it than on v3 (−0.7038
+against −0.5842). The rationale is re-earned rather than inherited. Had two or
+more axes become learnable, the recommendation would have been to return toward
+the sweep-settled `beta = 4`.
+
+Both recorded consequences stand: local penalization is inert at this beta, and
+the batch runs to the range edges. The second revisit trigger — R1 measurements
+replacing the oracle — has not fired.
+
+## The v3 DRY RUN, from 2026-08-17 (superseded)
+
+> **v3 rehearsed this contract's shape on test data** — its workbook was
+> literally called "Test". It is superseded by v4 above and its config is
+> archived. The sections below are its record: the mechanisms still apply
+> (constraints, the round report, the simulation), and its fitted numbers
+> are about objectives that have since been redefined.
+
+
+A second dataset arrived and ran a different objective contract: two of the three
+objectives were computed differently, the workbook's columns moved, two grids
+changed, and this project's first real constraints went live. Those constraints
+and mechanisms carry forward to v4 unchanged; the fitted numbers do not.
+
+| | v2 — algorithm testing | v3 — this section (now superseded by v4) |
 |---|---|---|
 | config | `configs/campaign_d2d_perovskite.yaml` (**archived**) | `configs/campaign_d2d_perovskite_test.yaml` |
 | contract | `d2d-objectives-v2-nm-thickness` | `d2d-objectives-v3-test` |

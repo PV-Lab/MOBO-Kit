@@ -78,11 +78,138 @@ __all__ = [
     "read_campaign_workbook",
     "read_candidate_results",
     "sheet_name_for_round",
+    "source_sheet",
     "workbook_digest",
     "write_candidate_sheet",
 ]
 
+#: Fallback for configs that predate `campaign.source_sheet`. The v4 workbook
+#: names its sheets by round (`R0`, `R1`), so the sheet a campaign reads is now a
+#: config key rather than a constant.
 SOURCE_SHEET = "Sheet1"
+
+
+def source_sheet(config: Mapping[str, Any]) -> str:
+    """Which sheet holds the measured rows for this campaign."""
+    return str((config.get("campaign") or {}).get("source_sheet", SOURCE_SHEET))
+
+
+def formula_findings(
+    path: str | Path, config: Mapping[str, Any]
+) -> tuple[ScoreFinding, ...]:
+    """Has a frozen score column's DEFINITION moved since it was recorded?
+
+    A ``stored`` objective is read rather than recomputed, so nothing in Python
+    knows what it means and no cross-check can catch a redefinition. This is the
+    partial replacement: read the formula TEXT (never evaluate it) and compare it
+    with the fingerprint in config.
+
+    Requires a second read of the workbook with ``data_only=False``, because
+    openpyxl gives either the formulas or their cached values and never both. That
+    is why it is skipped entirely unless a fingerprint is declared.
+    """
+    from .campaign import measurement_specs, objective_names
+
+    specs = list(measurement_specs(config))
+    names = list(objective_names(config))
+    wanted = [
+        (name, spec)
+        for name, spec in zip(names, specs)
+        if spec is not None and spec.formula_fingerprint is not None
+    ]
+    if not wanted:
+        return ()
+
+    sheet_name = source_sheet(config)
+    workbook = load_workbook(Path(path), data_only=False, read_only=False)
+    if sheet_name not in workbook.sheetnames:
+        return ()
+    sheet = workbook[sheet_name]
+    positions = _header_positions(sheet)
+
+    findings: list[ScoreFinding] = []
+    for name, spec in wanted:
+        fingerprint = spec.formula_fingerprint
+        column = fingerprint.column
+        if column not in positions:
+            findings.append(
+                ScoreFinding(
+                    severity=ScoreSeverity.WARNING,
+                    code="fingerprint_column_absent",
+                    objective=name,
+                    row_position=-1,
+                    sample_id=None,
+                    message=(
+                        f"{column!r} is not in {sheet_name}, so the frozen score's "
+                        "definition cannot be checked at all."
+                    ),
+                    column=column,
+                )
+            )
+            continue
+        index = positions[column]
+        seen: list[str] = []
+        for row in sheet.iter_rows(min_row=2, values_only=True):
+            if row[0] is None:
+                break
+            value = row[index]
+            if isinstance(value, str) and value.startswith("="):
+                seen.append(value)
+        if not seen:
+            findings.append(
+                ScoreFinding(
+                    severity=ScoreSeverity.WARNING,
+                    code="fingerprint_no_formula",
+                    objective=name,
+                    row_position=-1,
+                    sample_id=None,
+                    message=(
+                        f"{column!r} holds no formula on any row -- the values are "
+                        "literals. A frozen score that is pasted rather than "
+                        "computed cannot be checked against anything at all, which "
+                        "is the one failure this contract cannot see."
+                    ),
+                    column=column,
+                )
+            )
+            continue
+        changed = [text for text in seen if not fingerprint.matches(text)]
+        if changed:
+            findings.append(
+                ScoreFinding(
+                    severity=ScoreSeverity.WARNING,
+                    code="formula_fingerprint_changed",
+                    objective=name,
+                    row_position=-1,
+                    sample_id=None,
+                    message=(
+                        f"{column!r} no longer matches the recorded definition. "
+                        f"Recorded {fingerprint.formula!r}; found "
+                        f"{changed[0]!r} (and {len(changed) - 1} other row(s) that "
+                        "differ). This objective is READ, not recomputed, so the "
+                        "change is not an error -- but every number computed under "
+                        "the old definition is about a different quantity. Bump "
+                        "objectives.contract_version and update the fingerprint."
+                    ),
+                    column=column,
+                )
+            )
+        else:
+            findings.append(
+                ScoreFinding(
+                    severity=ScoreSeverity.NOTE,
+                    code="formula_fingerprint_unchanged",
+                    objective=name,
+                    row_position=-1,
+                    sample_id=None,
+                    message=(
+                        f"{column!r} still computes {fingerprint.formula!r} on all "
+                        f"{len(seen)} rows."
+                    ),
+                    column=column,
+                )
+            )
+    return tuple(findings)
 SAMPLE_COLUMN = "Sample number"
 ENTRY_FILL = PatternFill("solid", fgColor="FFF2CC")
 HEADER_FONT = Font(bold=True)
@@ -209,6 +336,7 @@ def _missing_columns_message(
     positions: Mapping[str, int],
     config: Mapping[str, Any],
     path: Path,
+    sheet_name: str = SOURCE_SHEET,
 ) -> str:
     """Say which CONTRACT wanted the column, not just that it is absent.
 
@@ -220,7 +348,7 @@ def _missing_columns_message(
     campaign = config.get("campaign") or {}
     contract = (config.get("objectives") or {}).get("contract_version")
     lines = [
-        f"{SOURCE_SHEET} of {path.name} is missing column(s) that the campaign "
+        f"{sheet_name} of {path.name} is missing column(s) that the campaign "
         f"configuration requires: {list(missing)}.",
         "",
         f"Configuration: {campaign.get('name')} "
@@ -257,13 +385,16 @@ def read_campaign_workbook(
 
     Rows below the data block are notes, not observations.
     """
+    sheet_name = source_sheet(config)
     workbook = load_workbook(Path(path), data_only=True, read_only=False)
-    if SOURCE_SHEET not in workbook.sheetnames:
+    if sheet_name not in workbook.sheetnames:
         raise CandidateSheetError(
-            f"Expected a sheet named {SOURCE_SHEET!r}; found "
-            f"{workbook.sheetnames}. If it was renamed, rename it back."
+            f"This campaign reads its measured rows from a sheet named "
+            f"{sheet_name!r} (campaign.source_sheet); {Path(path).name} has "
+            f"{workbook.sheetnames}. Either the workbook is for a different "
+            "campaign, or the sheet was renamed."
         )
-    sheet = workbook[SOURCE_SHEET]
+    sheet = workbook[sheet_name]
     positions = _header_positions(sheet)
 
     input_names = [item["name"] for item in config["inputs"]]
@@ -280,7 +411,9 @@ def read_campaign_workbook(
     ]
     if missing:
         raise CandidateSheetError(
-            _missing_columns_message(missing, positions, config, Path(path))
+            _missing_columns_message(
+                missing, positions, config, Path(path), sheet_name
+            )
         )
 
     rows = []
@@ -289,7 +422,7 @@ def read_campaign_workbook(
             break
         rows.append(row)
     if not rows:
-        raise CandidateSheetError(f"{SOURCE_SHEET} contains no measured rows.")
+        raise CandidateSheetError(f"{sheet_name} contains no measured rows.")
 
     def column(name: str) -> list[Any]:
         return [row[positions[name]] for row in rows]
@@ -323,6 +456,8 @@ def read_campaign_workbook(
             model_frame[name] = pd.to_numeric(
                 column(declared_column), errors="coerce"
             )
+
+    findings = tuple(findings) + formula_findings(path, config)
 
     return WorkbookContents(
         inputs=pd.DataFrame(
@@ -650,7 +785,7 @@ def write_candidate_sheet(
     afterwards, so the guarantee is enforced rather than assumed.
     """
     source_path = Path(path)
-    source_before = _source_sheet_digest(source_path)
+    source_before = _source_sheet_digest(source_path, source_sheet(config))
     workbook_path = candidate_workbook_path(source_path, round_name)
     sheet_name = sheet_name_for_round(round_name)
     if workbook_path.exists():
@@ -709,17 +844,17 @@ def write_candidate_sheet(
     workbook.save(workbook_path)
 
     # the invariant, actually enforced rather than asserted
-    if _source_sheet_digest(source_path) != source_before:
+    if _source_sheet_digest(source_path, source_sheet(config)) != source_before:
         raise CandidateSheetError(
-            f"{SOURCE_SHEET} in {source_path.name} changed while writing "
+            f"{source_sheet(config)} in {source_path.name} changed while writing "
             f"{workbook_path.name}. It should not have been touched at all."
         )
     return workbook_path
 
 
-def _source_sheet_digest(path: str | Path) -> str:
-    """Digest of Sheet1's values only, so added sheets do not change it."""
-    sheet = load_workbook(Path(path), data_only=True, read_only=False)[SOURCE_SHEET]
+def _source_sheet_digest(path: str | Path, sheet_name: str = SOURCE_SHEET) -> str:
+    """Digest of the source sheet's values only, so added sheets do not change it."""
+    sheet = load_workbook(Path(path), data_only=True, read_only=False)[sheet_name]
     digest = hashlib.sha256()
     for row in sheet.iter_rows(values_only=True):
         digest.update(repr(row).encode("utf-8"))

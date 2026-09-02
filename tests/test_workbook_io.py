@@ -243,5 +243,9 @@ def test_missing_source_sheet_is_a_plain_sentence(tmp_path, config) -> None:
     book = Workbook()
     book.active.title = "Renamed"
     book.save(path)
-    with pytest.raises(CandidateSheetError, match="rename it back"):
+    # The message must name the sheet the CONFIG asked for, the key that decides
+    # it, and what the workbook actually has. "Rename it back" was the old advice
+    # and stopped being right once the sheet became configuration: the likelier
+    # cause is now a workbook belonging to a different campaign.
+    with pytest.raises(CandidateSheetError, match="campaign.source_sheet"):
         read_campaign_workbook(path, config)

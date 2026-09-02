@@ -51,6 +51,7 @@ from .workbook_io import (
     detect_round,
     read_campaign_workbook,
     read_candidate_results,
+    source_sheet,
     write_candidate_sheet,
 )
 
@@ -71,7 +72,7 @@ __all__ = [
 #: it as a missing column, which reads as a broken workbook rather than as the
 #: config mismatch it is. That happened once, on 2026-08-18, between archiving
 #: campaign_d2d_perovskite.yaml and updating this line.
-DEFAULT_CONFIG = "configs/campaign_d2d_perovskite_test.yaml"
+DEFAULT_CONFIG = "configs/campaign_d2d_perovskite_final.yaml"
 
 #: Remembered between runs so the experimentalist browses to the workbook once.
 #: Kept in the user's home rather than the repo, so moving the checkout does not
@@ -137,6 +138,10 @@ class CampaignStatus:
     total_rows: int
     observed_conditions: int
     findings: tuple[ScoreFinding, ...] = ()
+    #: Which sheet the rows came from; "Sheet1" on the older contracts, "R0"
+    #: on v4. Shown rather than assumed, because a user looking at the wrong
+    #: sheet is exactly the confusion this line exists to prevent.
+    source_sheet: str = "Sheet1"
 
     @property
     def can_generate(self) -> bool:
@@ -160,7 +165,7 @@ class CampaignStatus:
         """The body text of the window: what is known, then what was noticed."""
         lines = [
             f"Workbook:   {self.workbook}",
-            f"Measured:   {self.observed_conditions} conditions on Sheet1",
+            f"Measured:   {self.observed_conditions} conditions on {self.source_sheet}",
             f"Status:     {self.reason}",
         ]
         if self.total_rows:
@@ -197,6 +202,7 @@ def inspect_campaign(
         total_rows=state.total_rows,
         observed_conditions=contents.n_rows,
         findings=contents.findings,
+        source_sheet=source_sheet(config),
     )
 
 
@@ -233,7 +239,7 @@ def gather_observations(
         )
     X = [contents.inputs.to_numpy(dtype=float)]
     Y = [contents.model_values.to_numpy(dtype=float)]
-    provenance = [f"Sheet1: {contents.n_rows} conditions"]
+    provenance = [f"{source_sheet(config)}: {contents.n_rows} conditions"]
     Yvar: np.ndarray | None = None
 
     if for_round.upper() == "R2":

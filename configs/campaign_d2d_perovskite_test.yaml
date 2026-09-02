@@ -19,7 +19,7 @@
 # layout differs from the first campaign's throughout.
 campaign:
   name: D2D_FA0.9Cs0.1PbI3_test
-  status: active
+  status: archived   # superseded by campaign_d2d_perovskite_final.yaml, 2026-09-02
   schema_version: d2d-campaign-v3
   workbook_profile: d2d_summary_test_v3
 

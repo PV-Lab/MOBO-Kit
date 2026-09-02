@@ -408,7 +408,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--workbook", required=True, type=Path)
     parser.add_argument(
         "--config", type=Path,
-        default=Path("configs/campaign_d2d_perovskite_test.yaml"),
+        default=Path("configs/campaign_d2d_perovskite_final.yaml"),
     )
     parser.add_argument(
         "--output-dir", type=Path, default=Path("local_outputs/boxplot_sweep")

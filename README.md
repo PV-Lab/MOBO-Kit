@@ -21,21 +21,27 @@ off several objectives at once, for problems with more than two inputs and more
 than two outputs. Developed across the University of Washington, UC San Diego and
 MIT, and demonstrated on slot-die coated perovskite films.
 
-## Two campaigns in this repository
+## Three contracts, one live campaign
 
-| | first — algorithm testing | second — **the live campaign** |
-|---|---|---|
-| config | `configs/campaign_d2d_perovskite.yaml` (**archived**) | `configs/campaign_d2d_perovskite_test.yaml` |
-| contract | `d2d-objectives-v2-nm-thickness` | `d2d-objectives-v3-test` |
-| workbook | `Summary Table.xlsx` | `Summary Table Test.xlsx` |
-| purpose | validating the toolkit end to end | the experiment being run |
+| | v2 — algorithm testing | v3 — dry run | v4 — **the live campaign** |
+|---|---|---|---|
+| config | `campaign_d2d_perovskite.yaml` (archived) | `campaign_d2d_perovskite_test.yaml` (archived) | `campaign_d2d_perovskite_final.yaml` |
+| contract | `d2d-objectives-v2-nm-thickness` | `d2d-objectives-v3-test` | `d2d-objectives-v4-final` |
+| workbook | `Summary Table.xlsx` | `Summary Table Test.xlsx` | `Final Summary Table.xlsx` |
+| sheet | `Sheet1` | `Sheet1` | `R0` |
+| purpose | proving the loop worked | rehearsing this contract's shape | **the experiment being run** |
 
-The first campaign's data existed to check that the loop worked, and it is kept as
-a record rather than deleted — `docs/GP_MODEL_DECISION.md` and the other
-banner-marked documents describe it. **Two of the three objectives are computed
-differently in the second campaign**, so none of the first campaign's fitted
-numbers carry over; they are about quantities that were redefined. The launcher
-and every script default to the live campaign.
+Uniformity and optoelectronic have been renormalised twice, so **none of v2's or
+v3's fitted numbers carry over** — they are about quantities that were redefined.
+Each earlier contract is kept as a record, with a banner on every document that
+describes it. The launcher and every script default to v4.
+
+**In v4 the uniformity and optoelectronic scores are FROZEN**: they are read from
+the workbook as stored, with no recomputation in Python, because the group is
+still revising how they are defined. Thickness is still computed, because its
+definition has been stable and the recomputation is what lets an operator-flagged
+reading be excluded and reported. See `docs/CAMPAIGN_STATUS.md` for what freezing
+costs and what replaces the missing cross-check.
 
 ## The campaign loop
 
@@ -52,13 +58,13 @@ reproducibility can be measured.
 from mobo_kit.campaign import load_campaign_config, run_r0_lhs, run_r1_ucb, run_r2_qlognehvi
 from mobo_kit.workbook_io import read_campaign_workbook
 
-config = load_campaign_config("configs/campaign_d2d_perovskite_test.yaml")
+config = load_campaign_config("configs/campaign_d2d_perovskite_final.yaml")
 
 r0 = run_r0_lhs(config, n=15)                        # space-filling, no model
 
-# objective values are computed from the raw measurement columns and the stored
-# score cells become a cross-check -- several of those are pasted literals
-contents = read_campaign_workbook("local_inputs/Summary Table Test.xlsx", config)
+# uniformity and optoelectronic are read from the workbook as stored (frozen);
+# thickness is computed from the raw readings and cross-checked
+contents = read_campaign_workbook("local_inputs/Final Summary Table.xlsx", config)
 X_phys = contents.inputs.to_numpy(float)
 Y_model = contents.model_values.to_numpy(float)      # in objective order
 assert contents.errors == ()                         # fail closed before fitting
@@ -212,7 +218,7 @@ scripts/   diagnostics, report figures, intake_new_data.py,
            dtlz2_parameter_sweep.py, plot_round_simulation.py,
            plot_shap_attribution.py, permutation_rank_test.py,
            generate_round_report.py
-tests/     580 tests
+tests/     601 tests
 launch_mobo_kit.bat, launch_mobo_kit.command   double-click entry points
 ```
 

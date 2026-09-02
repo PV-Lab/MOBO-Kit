@@ -1353,6 +1353,17 @@ def generate_round_report(
 
     # ---------------------------------------------------------- the notices --
     entries = config["objectives"]["specs"]
+    frozen = [
+        str(entry.get("name"))
+        for entry in entries
+        if str((entry.get("measurement") or {}).get("recipe")) == "stored"
+    ]
+    if frozen:
+        notices.append(
+            f"{' and '.join(frozen)} are taken from the workbook as stored; no "
+            "independent recomputation exists under this contract, so a stale "
+            "value in those columns would not be caught here."
+        )
     for index, name in enumerate(names):
         status = str(entries[index].get("signal_status", ""))
         if status and status != "learnable":

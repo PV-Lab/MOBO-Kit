@@ -1,6 +1,6 @@
 """One command to run when the experimental group returns new or corrected data.
 
-    python scripts/intake_new_data.py --workbook "local_inputs/Summary Table Test.xlsx"
+    python scripts/intake_new_data.py --workbook "local_inputs/Final Summary Table.xlsx"
 
 The group has always described the current numbers as test data, so a replacement
 was expected from the start.  When it arrives, the question is not "does the code
@@ -65,7 +65,7 @@ def main() -> int:
     # Defaults to the ACTIVE campaign. The first campaign's config is archived, and
     # defaulting to it would quietly audit new rows against a retired contract --
     # different recipes, different anchors, different grids.
-    parser.add_argument("--config", default="configs/campaign_d2d_perovskite_test.yaml")
+    parser.add_argument("--config", default="configs/campaign_d2d_perovskite_final.yaml")
     parser.add_argument(
         "--skip-model",
         action="store_true",

@@ -1,44 +1,57 @@
 # Handoff
 
-Read this first in a new session. Updated 2026-08-18, at the audit pass before the
-first push since 2026-07-31.
+Read this first in a new session. Updated 2026-09-02, when the final workbook
+arrived and the score contract moved to v4.
 
 ## What this repository is doing right now
 
-**There are two campaigns, and only one of them is real.**
+**There are three objective contracts, and only the last one is real.**
 
-| | first — algorithm testing | second — **the live campaign** |
-|---|---|---|
-| config | `configs/campaign_d2d_perovskite.yaml`, **archived** | `configs/campaign_d2d_perovskite_test.yaml` |
-| contract | `d2d-objectives-v2-nm-thickness` | `d2d-objectives-v3-test` |
-| workbook | `local_inputs/Summary Table.xlsx` | `local_inputs/Summary Table Test.xlsx` |
-| purpose | proving the loop worked | the experiment being run |
+| | v2 — algorithm testing | v3 — dry run | v4 — **the live campaign** |
+|---|---|---|---|
+| config | `campaign_d2d_perovskite.yaml` (archived) | `campaign_d2d_perovskite_test.yaml` (archived) | `campaign_d2d_perovskite_final.yaml` |
+| contract | `d2d-objectives-v2-nm-thickness` | `d2d-objectives-v3-test` | `d2d-objectives-v4-final` |
+| workbook | `Summary Table.xlsx` | `Summary Table Test.xlsx` | `Final Summary Table.xlsx` |
+| sheet | `Sheet1` | `Sheet1` | `R0` |
+| purpose | proving the loop worked | rehearsing this contract's shape | **the experiment being run** |
 
-The first campaign's numbers were how the toolkit was validated. **Two of the three
-objectives are computed differently in the second**, so none of those fitted
-numbers transfer — they describe quantities that were redefined. Every document
-that is about the first campaign now says so in a banner at the top. Everything
-else is about the live one.
+v2 proved the loop worked. v3 rehearsed the shape of this contract on a workbook
+literally called "Test". **v4 is the campaign that produces films.** Uniformity
+and optoelectronic have been renormalised twice since v2, so none of the earlier
+fitted numbers transfer; every document about an earlier contract carries a banner
+saying so.
+
+**In v4 those two objectives are FROZEN** — read from the workbook as stored, with
+no recomputation, because the group is still revising the definitions. That is a
+deliberate reversal of this project's usual polarity and it removes a cross-check;
+`formula_fingerprint` is the partial replacement, and it notices a changed
+*definition* rather than a stale *value*. Thickness is still computed.
+
+**The workbook's sheet is now `R0`**, not `Sheet1`, so the source sheet is a config
+key (`campaign.source_sheet`) rather than a constant. The workbook also carries an
+`R1` sheet; it is deliberately not read. The round contract is unchanged — each
+round's worklist goes to a NEW file beside the workbook and the source is never
+opened for writing.
 
 The launcher, `intake_new_data.py`, `permutation_rank_test.py`,
 `generate_round_report.py`, `plot_round_simulation.py` and `plot_boxplot_sweep.py`
-all default to the live config. **Archiving a config without moving the launcher's
-default is how a user got a missing-column error on an intact workbook**; a test
-now pins that the launcher's default names an active campaign.
+all default to v4. **Archiving a config without moving the launcher's default is
+how a user once got a missing-column error on an intact workbook**; a test pins
+that the launcher's default names an active campaign.
 
-Both workbooks live under `local_inputs/`, which is gitignored and never travels
-by git. Copy them by hand on any move.
+All workbooks live under `local_inputs/`, which is gitignored and never travels by
+git. Copy them by hand on any move.
 
 ## Read these, in this order (~25 minutes)
 
-1. **`README.md`** — what the toolkit is, the two campaigns, the three-round loop,
+1. **`README.md`** — what the toolkit is, the three contracts, the three-round loop,
    how an experimentalist runs a round without writing code, and how `beta` and
    `radius` were chosen.
 2. **`docs/CAMPAIGN_STATUS.md`** — the working guide and the longest of the three.
-   Start at "Second campaign", which is at the top; everything below that section
-   describes the first campaign unless it says otherwise.
-3. **`docs/GP_MODEL_DECISION.md`** — why the model is the way it is. It is the
-   **first** campaign's record and carries a banner saying so. What still applies
+   Its live-campaign section is at the top; everything below the divider
+   describes an earlier contract.
+3. **`docs/GP_MODEL_DECISION.md`** — why the model is the way it is. It is **v2's**
+   record and carries a banner saying so. What still applies
    is the *method* — the floors, the null, refitting a trend inside every fold, the
    two degenerate fitting modes — and none of its LOO numbers.
 
@@ -48,7 +61,7 @@ Then verify the state yourself:
 pytest -q
 ```
 
-Expect **580 passed, 0 failed, 28 warnings** (~180 s). Nothing in the suite needs a
+Expect **601 passed, 0 failed, 28 warnings** (~185 s). Nothing in the suite needs a
 private workbook; the tests that would use one skip when it is absent.
 
 **`--capture=sys` in `addopts` is load-bearing, not a preference.** pytest's
@@ -65,16 +78,16 @@ failures in 9 runs of one launcher test under `--capture=fd`, none under
 
 ```bash
 # audit new or corrected data, and re-decide every mean function on it
-python scripts/intake_new_data.py --workbook "local_inputs/Summary Table Test.xlsx"
+python scripts/intake_new_data.py --workbook "local_inputs/Final Summary Table.xlsx"
 
 # adjudicate a mean function on RANK when R2 cannot resolve it
 python scripts/permutation_rank_test.py --objective thickness --permutations 1800
 
 # the six figures a round produces, from a terminal instead of the button
-python scripts/generate_round_report.py --workbook "local_inputs/Summary Table Test.xlsx"
+python scripts/generate_round_report.py --workbook "local_inputs/Final Summary Table.xlsx"
 
 # the campaign loop against a frozen oracle, at the ratified knobs
-python scripts/plot_round_simulation.py --workbook "local_inputs/Summary Table Test.xlsx" --cell 0.35,36
+python scripts/plot_round_simulation.py --workbook "local_inputs/Final Summary Table.xlsx" --cell 0.35,36
 ```
 
 `launch_mobo_kit.bat` / `.command` is the one-button path: check the workbook,
@@ -89,53 +102,55 @@ that they agree.
 
 ## Where the live campaign stands
 
-Measured on its 15 rows by `intake_new_data.py`, against a leave-one-out null of
-**−0.1480**:
+Measured on v4's 15 rows by `intake_new_data.py`, against a leave-one-out null of
+**-0.1480** and a resolution floor of **+-0.236**:
 
 | objective | plain GP | with mean function | verdict |
 |---|---:|---:|---|
-| uniformity | −0.6447 | — | below the null → **exploration only** |
-| optoelectronic | −0.5842 | −0.6977 | below the null → **exploration only**, mean function deleted |
-| thickness | +0.5227 | +0.6630 | **learnable** |
+| uniformity | **-0.4778** | — | below the null → **exploration only** |
+| optoelectronic | **-0.7038** | — | below the null → **exploration only** |
+| thickness | **+0.5814** | **+0.7422** | **learnable**; swing +0.1608, inside the floor |
 
-**Two of the three axes carry no signal.** A batch is therefore chosen on one
-informative axis and two uninformative ones. That is a legitimate exploration
-round; it is not a three-objective optimisation, and the review says so rather
-than letting the predicted numbers imply otherwise.
+**Still only one learnable axis**, as on v3 — and that decides the knobs.
+`beta = 36` was chosen because two of three objectives carried no signal, which
+makes heavy exploration the right posture. Both objectives have been renormalised
+since, so that rationale had to be re-earned; it was. **Keep `beta = 36` and
+`radius = 0.35`.** Had two or more axes become learnable, the recommendation would
+have been to return toward the sweep-settled `beta = 4`.
 
-**Thickness keeps its mean function on the rank permutation**, not on R²:
-observed rank ρ **+0.7250**, null mean −0.1917 (sd 0.2937), **4 exceedances in
-1800**, **p = 0.0028, 95% CI [0.0003, 0.0052]**. Intake had left it *inconclusive
-on R²* — the +0.1403 swing sits inside the ±0.236 floor — which is a statement
-that R² cannot resolve it at N=15 rather than a verdict. Rank is what the
-acquisition consumes; it never sees R². **Do not quote the swing as evidence.**
+**Uniformity and optoelectronic are read from the workbook, not computed.** No
+independent recomputation exists under this contract. The formula fingerprints
+notice a changed *definition*; nothing here can notice a value that has gone
+stale. That is the price of the freeze, and it is paid deliberately.
 
-**Knobs: `beta = 36`, `radius = 0.35`**, a declared policy about how much to
-explore rather than a measured optimum. Two consequences are on record — local
-penalization is inert (batch spacing 1.091 against a 0.35 radius) and the batch
-runs to the edges (21 of 50 coordinates at a bound) — along with two triggers for
-revisiting. `CAMPAIGN_STATUS.md` has the section.
+**The v3 photoconductance inversion is fixed.** Its normalised column ranked
+backwards against its own raw measurement (Spearman -0.5484, p = 0.0343); on v4
+the same comparison gives **+1.0000**. Issue 10 is closed. The diagnostic stays on
+because the failure is silent when it recurs.
+
+**Thickness keeps its mean function on the rank permutation**, not on R². Intake
+leaves it *inconclusive on R²* — the swing sits inside the floor, which is a
+statement that R² cannot resolve it at N=15 rather than a verdict. Rank is what
+the acquisition consumes; it never sees R². **Do not quote the swing as
+evidence.** Measured on v4: observed rank ρ **+0.6500**, null mean −0.1892
+(sd 0.2944), **9 exceedances in 1800**, **p = 0.0056, 95% CI [0.0021, 0.0090]**.
 
 ## What is actually open
 
-1. **Nobody has run a batch on the live campaign yet.** No worklist exists for it;
-   pressing **Propose R1** writes one, plus the Review sheet and six figures.
-   Fifteen films is a real cost, and whether to fabricate is a human decision that
-   is not automated.
-2. **The photoconductance normalisation is wrong and the group is fixing it**
-   (issue 10). `Normalized photoconductance` does not rank like the raw
-   measurement it summarises: Spearman **−0.5484**, p = 0.0343, with the strongest
-   film carrying the column minimum. It is half of the optoelectronic objective
-   and is the prime suspect for that axis being unlearnable. Closing it is one
-   recipe edit plus one intake run — and the mean function should be re-decided
-   afterwards, because it may well earn its place once the column tracks its
-   measurement.
+1. **No batch has been proposed on the live campaign yet.** Pressing **Propose
+   R1** writes the worklist, the Review sheet and six figures. Fifteen films is a
+   real cost, and whether to fabricate is a human decision that is not automated.
+2. **The frozen scores are temporary.** The group will settle how uniformity and
+   optoelectronic are computed and then unfreeze them. The v3 recipes (`mean`,
+   `clamped_complement`, `capped_ratio`) remain in `scores.py`, unwired, so that
+   is an edit rather than a rebuild. Unfreezing means a new `contract_version`.
 3. **Phase 4 waits on the R1 triplicates.** `replicate_variance.py` is wired and
    tested; enabling it is one config key, `model.observation_noise:
-   replicate_pooled`.
+   replicate_pooled`. The `replicate_variance.sanity_floor` for thickness is still
+   v3's 0.006374 and should be recomputed on v4's readings, which changed.
 4. **`anneal_temp` sits at a range edge in proposed conditions.** If the group
    would never anneal below some temperature, that belongs in `constraints:` —
-   which is now a live list with three entries, so adding one is a two-line change.
+   now a live list with three entries, so adding one is a two-line change.
 
 ## Three floors. Check all three before comparing any two numbers.
 
