@@ -23,13 +23,13 @@ MIT, and demonstrated on slot-die coated perovskite films.
 
 ## Three contracts, one live campaign
 
-| | v2 — algorithm testing | v3 — dry run | v4 — **the live campaign** |
+| | v2 — test data | v3 — test data | v4 — **the real campaign** |
 |---|---|---|---|
 | config | `campaign_d2d_perovskite.yaml` (archived) | `campaign_d2d_perovskite_test.yaml` (archived) | `campaign_d2d_perovskite_final.yaml` |
 | contract | `d2d-objectives-v2-nm-thickness` | `d2d-objectives-v3-test` | `d2d-objectives-v4-final` |
 | workbook | `Summary Table.xlsx` | `Summary Table Test.xlsx` | `Final Summary Table.xlsx` |
 | sheet | `Sheet1` | `Sheet1` | `R0` |
-| purpose | proving the loop worked | rehearsing this contract's shape | **the experiment being run** |
+| purpose | early toolkit testing | rehearsing this contract's shape | **the experiment being run** |
 
 Uniformity and optoelectronic have been renormalised twice, so **none of v2's or
 v3's fitted numbers carry over** — they are about quantities that were redefined.

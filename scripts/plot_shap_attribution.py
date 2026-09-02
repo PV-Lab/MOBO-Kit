@@ -39,7 +39,7 @@ WHAT SHAP DOES AND DOES NOT SHOW HERE.
 
 Usage::
 
-    python scripts/plot_shap_attribution.py --workbook "local_inputs/Summary Table.xlsx"
+    python scripts/plot_shap_attribution.py --workbook "local_inputs/Final Summary Table.xlsx"
     python scripts/plot_shap_attribution.py --workbook ... --instances 200
     python scripts/plot_shap_attribution.py --workbook ... --no-figures
     python scripts/plot_shap_attribution.py --workbook ... --extreme-cells
@@ -386,7 +386,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--workbook", required=True, type=Path)
     parser.add_argument(
-        "--config", type=Path, default=Path("configs/campaign_d2d_perovskite.yaml")
+        "--config", type=Path, default=Path("configs/campaign_d2d_perovskite_final.yaml")
     )
     parser.add_argument("--output-dir", type=Path, default=Path("local_outputs/shap"))
     parser.add_argument("--seed", type=int, default=None)

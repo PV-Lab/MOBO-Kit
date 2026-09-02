@@ -9,7 +9,7 @@ R2 qLogNEHVI (3), three replicate films per condition, 23 distinct conditions.
 optoelectronic were renormalised a second time, and the group's decision this time
 is to **freeze them**: read the workbook's own score columns and compute nothing.
 
-| | v2 — algorithm testing | v3 — dry run | v4 — **live** |
+| | v2 — test data | v3 — test data | v4 — **the real campaign** |
 |---|---|---|---|
 | config | `campaign_d2d_perovskite.yaml` (archived) | `campaign_d2d_perovskite_test.yaml` (archived) | `campaign_d2d_perovskite_final.yaml` |
 | contract | `d2d-objectives-v2-nm-thickness` | `d2d-objectives-v3-test` | `d2d-objectives-v4-final` |
@@ -293,7 +293,7 @@ round's measurements are entered, before deciding whether to propose at all. Sam
 thing headless:
 
 ```bash
-python scripts/generate_round_report.py --workbook "local_inputs/Summary Table Test.xlsx" --data-only
+python scripts/generate_round_report.py --workbook "local_inputs/Final Summary Table.xlsx" --data-only
 ```
 
 **Every figure writes the CSV behind it**, plus a `manifest.json` recording the

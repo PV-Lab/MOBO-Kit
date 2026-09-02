@@ -7,13 +7,13 @@ arrived and the score contract moved to v4.
 
 **There are three objective contracts, and only the last one is real.**
 
-| | v2 — algorithm testing | v3 — dry run | v4 — **the live campaign** |
+| | v2 — test data | v3 — test data | v4 — **the real campaign** |
 |---|---|---|---|
 | config | `campaign_d2d_perovskite.yaml` (archived) | `campaign_d2d_perovskite_test.yaml` (archived) | `campaign_d2d_perovskite_final.yaml` |
 | contract | `d2d-objectives-v2-nm-thickness` | `d2d-objectives-v3-test` | `d2d-objectives-v4-final` |
 | workbook | `Summary Table.xlsx` | `Summary Table Test.xlsx` | `Final Summary Table.xlsx` |
 | sheet | `Sheet1` | `Sheet1` | `R0` |
-| purpose | proving the loop worked | rehearsing this contract's shape | **the experiment being run** |
+| purpose | early toolkit testing | rehearsing this contract's shape | **the experiment being run** |
 
 v2 proved the loop worked. v3 rehearsed the shape of this contract on a workbook
 literally called "Test". **v4 is the campaign that produces films.** Uniformity
@@ -172,10 +172,10 @@ inside a floor twice before adopting that rule.
 
 ## Settled, do not reopen
 
-- **The two campaigns' objectives are different quantities.** A shared
+- **Each contract's objectives are different quantities.** A shared
   `contract_version` would make their hypervolumes look comparable when they
-  measure different spaces. That is why the second campaign is a new config file
-  rather than an edit.
+  measure different spaces. That is why every redefinition arrives as a new
+  config file rather than an edit -- three times now.
 - **`ObjectiveTransform.transform` takes MODEL-space values, not measurements.**
   It decodes the link itself, so handing it thickness in nanometres exponentiates
   a value that was never a logarithm. Use `transform.transform_measurements` at

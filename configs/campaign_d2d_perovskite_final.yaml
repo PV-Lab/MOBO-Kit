@@ -322,11 +322,21 @@ model:
   observation_noise: fit_from_marginal_likelihood
 
   replicate_variance:
-    # RECOMPUTE ON THIS WORKBOOK before trusting it. The value below is v3's
-    # within-film floor; the v4 thickness readings differ (sample 1's 418.5 moved
-    # to `T anom`, so its mean moved 579.9 -> 633.7). Intake reports the new one.
+    # TWO DIFFERENT VARIANCES. Do not substitute one for the other.
+    #
+    # BETWEEN-FILM is what train_Yvar needs and is only measurable once R1 ships
+    # triplicates. WITHIN-FILM is the scatter of the 3-4 thickness points across
+    # one film, available today, and contains NO run-to-run variation -- so it is
+    # a FLOOR, not an estimate. If pooled between-film variance ever lands below
+    # it, films would be more reproducible than points on a single film.
+    #
+    # RECOMPUTED ON THIS WORKBOOK, 2026-09-02: 0.003007 on log(T), 36 dof
+    # (sd 0.0548), against v3's 0.006374. Roughly half, and the reason is visible:
+    # sample 1's 418.5 reading moved into `T anom` on this sheet, which took that
+    # film's sd_log from 0.218 to 0.085. Inheriting v3's constant would have set
+    # the floor twice too high and called an ordinary pooled variance a mistake.
     sanity_floor:
-      thickness: 0.006374
+      thickness: 0.003007
     rows_without_replicates: 1
 
 reproducibility:

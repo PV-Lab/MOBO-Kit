@@ -3,16 +3,16 @@
 Measured 2026-07-28 on the corrected `Summary Table.xlsx` (15 R0 observations,
 10 inputs). Reproduce with `python scripts/gp_diagnostic.py`.
 
-> **This document is about the FIRST campaign, which was ALGORITHM TESTING.**
-> Its contract was `d2d-objectives-v2-nm-thickness` and its data existed to
-> prove the loop worked rather than to run an experiment; it is kept as that
-> record. A second campaign
-> opened on 2026-08-17 with a new contract (`d2d-objectives-v3-test`) on a new
+> **This document is about TEST DATA.** Its contract was
+> `d2d-objectives-v2-nm-thickness` and its workbook existed to develop and
+> check the toolkit rather than to run an experiment; it is kept as that
+> record. **The real campaign is v4**, on `Final Summary Table.xlsx`. A second
+> test contract (`d2d-objectives-v3-test`) came in between, on another
 > workbook: uniformity became a mean rather than a product and optoelectronic a
 > mean of normalised terms rather than a log10 product, so **no LOO R², signal
 > verdict or mean function below transfers to it** — they are about quantities
 > that were redefined. Its numbers come from
-> `python scripts/intake_new_data.py --workbook "local_inputs/Summary Table Test.xlsx"`
+> `python scripts/intake_new_data.py --workbook "local_inputs/Final Summary Table.xlsx"`
 > and are recorded in `CAMPAIGN_STATUS.md`. What does carry over is the *method*:
 > the three floors, the null, the refit-inside-every-fold rule, and the two
 > degenerate fitting modes.
