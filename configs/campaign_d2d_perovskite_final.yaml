@@ -90,30 +90,31 @@ inputs:
     stop: 25
     step: 1
 
-# THE SCORES ARE FROZEN. Read the group's decision before changing anything here.
+# UNIFORMITY AND OPTOELECTRONIC ARE READ AS STORED. The workbook's score column
+# IS the objective value.
 #
-# Uniformity and optoelectronic are taken from the workbook AS STORED, with no
-# recomputation in Python. That is a deliberate reversal of this project's usual
-# polarity, which is "Python computes and the stored cell is a cross-check".
+# HOW THOSE SCORES ARE CONSTRUCTED IS NOT RECORDED HERE, BY DECISION.
 #
-# WHY. Both objectives have now been renormalised twice -- uniformity's clamp and
-# optoelectronic's Voc/photoconductance weighting -- and the group is still
-# revising them. Reimplementing a formula that is about to change means the code
-# and the sheet disagree at exactly the moment someone edits the sheet, and the
-# disagreement looks like a bug in whichever was checked second. Reading the value
-# makes the workbook the single source of truth while the definition moves.
+# The SCORE VALUE is the interface. How a composite is defined -- which terms,
+# what weighting, which normalisation -- is a choice this group makes for itself,
+# and another group running MOBO-Kit on the same chemistry may define uniformity
+# completely differently and be equally right. What is shared is the contract's
+# SHAPE: one number per objective per film, on a declared scale. Encoding this
+# group's particular arithmetic in the tool would make the tool quietly specific
+# to us. It also gave the definition a second place to live and go stale, which
+# happened three times.
 #
-# WHAT THIS COSTS, stated plainly because it is the cross-check this project
-# otherwise insists on: there is NO independent recomputation of these two
-# objectives under this contract, so a stale pasted literal in AJ or AK cannot be
-# caught by comparing it against anything. `formula_fingerprint` is the partial
-# replacement -- it notices when the DEFINITION moves, not when a value goes
-# stale. The v3 recipes remain in `scores.py`, unwired, for when the group settles
-# the formulas and these objectives are unfrozen.
+# WHAT THIS COSTS: no independent recomputation, so a stale pasted literal in
+# either column cannot be caught by comparing it against anything. That is the
+# price of the freeze and it is paid deliberately. The `formula_fingerprint` below
+# is the partial replacement and is NOT documentation -- it is a runtime alarm
+# that fires when the column's formula TEXT changes, which is the event that makes
+# hypervolume incomparable across rounds. It records what the formula was so that
+# a change is audible; it does not claim to explain it.
 #
-# Thickness is NOT frozen. Its definition has been stable across all three
-# contracts, the model trains on raw nanometres rather than on the score, and the
-# recomputation is what lets `T anom` be excluded and reported.
+# Thickness is the exception and is COMPUTED, because the recomputation is what
+# lets an anomalous `T anom` reading be excluded AND NAMED, and because the model
+# trains on nanometres rather than on the stored score.
 objectives:
   contract_version: d2d-objectives-v4-final-nomean
   scaling_mode: fixed_affine
@@ -122,19 +123,19 @@ objectives:
     model_source_column: "Uniformity score (Avg (Coverage + (1-Uniformity) + Phase purity))"
     transform: affine
     goal: maximize
-    # FROZEN. AJ = (L + O + P) / 3 in the sheet. Read, never recomputed.
+    # Read, never recomputed.
     measurement:
       recipe: stored
       inputs:
         - {column: "Uniformity score (Avg (Coverage + (1-Uniformity) + Phase purity))"}
-      # Not a cross-check -- there is nothing to check against under a freeze.
-      # This records the definition so a change to it is audible.
+      # A runtime alarm, not documentation: it fires if this column's formula
+      # text changes, because that is the event that silently redefines the
+      # objective and makes hypervolume incomparable across rounds.
       formula_fingerprint:
         column: "Uniformity score (Avg (Coverage + (1-Uniformity) + Phase purity))"
         formula: "=(L2+O2+P2)/3"
-    # A mean of three terms each in [0, 1] is in [0, 1] by construction, so these
-    # anchors are the objective's range rather than a guess. Observed span on the
-    # 15 rows: 0.599 to 0.882.
+    # The score is a fraction, so [0, 1] is its range rather than a guess.
+    # Observed span on the 15 rows: 0.599 to 0.882.
     lower_anchor: 0.0
     upper_anchor: 1.0
     # MEASURED ON THESE ROWS. Plain GP LOO R2 -0.4688 against a null of -0.1480:
@@ -152,15 +153,12 @@ objectives:
     model_source_column: "Optoelectronic score (Normalized (Voc + (0.75*Photoconductance + 0.25*Photosensitivity))/2"
     transform: affine
     goal: maximize
-    # FROZEN. AK = (S + (0.75*Y + 0.25*AB)) / 2 in the sheet: normalised Voc
-    # against a 1.3 V cap, plus a weighted blend of normalised photoconductance
-    # and normalised capped photosensitivity. Read, never recomputed.
+    # Read, never recomputed.
     #
-    # THE v3 PHOTOCONDUCTANCE INVERSION IS FIXED. On the v3 workbook the
-    # normalised column ranked BACKWARDS against its own raw measurement
-    # (Spearman -0.5484, p = 0.0343). On this one the same comparison gives
-    # +1.0000. The diagnostic below stays anyway: it is cheap, and the failure it
-    # watches for is silent when it recurs.
+    # The agreement check below stays because it caught a real defect once: on the
+    # v3 workbook the normalised photoconductance column ranked BACKWARDS against
+    # its own raw measurement (Spearman -0.5484, p = 0.0343). It is +1.0000 here.
+    # The check is cheap and the failure it watches for is silent when it recurs.
     measurement:
       recipe: stored
       inputs:
@@ -172,8 +170,8 @@ objectives:
         raw: "Photoconductance (Max - based on raw slopes)"
         normalized: "Normalized photoconductance (test)"
         min_spearman: 0.0
-    # Both terms are normalised to [0, 1], so their mean is too. Observed span on
-    # the 15 rows: 0.477 to 0.762.
+    # The score is a fraction, so [0, 1] is its range rather than a guess.
+    # Observed span on the 15 rows: 0.477 to 0.762.
     lower_anchor: 0.0
     upper_anchor: 1.0
     # MEASURED ON THESE ROWS, 2026-09-02. Plain GP LOO R2 -0.7038 against a null
@@ -339,18 +337,10 @@ review:
 
   notes:
     - >
-      UNIFORMITY AND OPTOELECTRONIC ARE TAKEN FROM THE WORKBOOK AS STORED. There
-      is no independent recomputation of either under this contract, by decision,
-      because the group is still revising how they are defined. The consequence
-      worth knowing while reading a batch: a stale pasted value in those columns
-      would not be caught by anything here. The formula fingerprints catch a
-      changed definition; they cannot catch a value that has stopped tracking its
-      inputs.
-    - >
-      The photoconductance inversion that made the previous contract's
-      optoelectronic axis provisional is FIXED. Normalised photoconductance now
-      ranks with its raw measurement at Spearman +1.0000, against -0.5484 before.
-      The diagnostic stays on because the failure is silent when it recurs.
+      Uniformity and optoelectronic are read from the workbook as stored. A stale
+      pasted value in either column would not be caught by anything here; the
+      formula fingerprints catch a changed definition, not a value that has
+      stopped tracking its inputs.
 
 local_penalization:
   distance_metric: normalized_euclidean

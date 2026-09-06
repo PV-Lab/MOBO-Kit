@@ -1,71 +1,70 @@
-"""Compute each objective's model input from the raw measurement columns.
+"""Turn the workbook's columns into each objective's model input.
 
-The workbook also stores the derived values the model used to train on --
-``Uniformity score`` (Z), ``Optoelectronic score`` (AA), ``Thickness (avg)``
-(X) -- and three of those cells are **pasted literals, not formulas**, so they do
-not update when the measurements behind them are edited.  That is the failure
-that produced the original uniformity discrepancy, and an audit of all 15 R0 rows
-on 2026-07-29 found the same divergence already present between ``AB`` and ``Y``:
-``Y`` evaluates the thickness Gaussian on the rounded ``X`` while ``AB`` was
-pasted from the same Gaussian on the unrounded T mean, and the two disagree by up
-to 1.7e-3.
+**THE LIVE POLICY, and it is not uniform across objectives.** Under
+``d2d-objectives-v4-final-nomean``:
 
-So the polarity is inverted here.  **Python computes; the workbook is checked.**
-Each objective declares a ``measurement`` block naming a recipe and its input
-columns.  The stored column becomes a cross-check that warns on disagreement and
-never reaches the model.
+* **uniformity and optoelectronic are READ AS STORED.** The workbook's score
+  column *is* the objective value. Python computes nothing and this module
+  deliberately does NOT record how those numbers are arrived at.
 
-The recipes are in code because they are the campaign's physics, not its
-configuration; the column names and tolerances are in config because those are
-what change when the dataset changes:
+  **THE SCORE VALUE IS THE INTERFACE; THE FORMULA BEHIND IT IS NOT.** How a
+  composite score is defined is a decision each group makes for itself -- which
+  terms, what weighting, which normalisation -- and MOBO-Kit is not the right
+  place to encode one group's convention. Two groups running this tool on the
+  same chemistry may disagree entirely on how uniformity is scored and both be
+  right. What they share is the shape of the contract: a number per objective per
+  film, on a declared scale. Encoding one group's arithmetic here would make the
+  tool quietly specific to them, and in practice it also gave the definition a
+  second place to live and go stale, which happened three times.
+
+  The `stored` recipe is the whole implementation.
+* **thickness is COMPUTED**, from ``T1..T4`` with the operator's ``T anom``
+  readings excluded and reported, and cross-checked against the workbook's own
+  average. It earns the exception because the recomputation is what lets an
+  anomalous reading be excluded *and named*, and because the model trains on
+  nanometres rather than on the stored score -- see the objective transform, not
+  this module, for why that matters.
+
+**What this costs, stated plainly:** there is no independent recomputation of the
+two frozen objectives, so a stale pasted literal in either column cannot be caught
+by comparing it against anything here. That is the price of the freeze and it is
+paid deliberately.
+
+THE RECIPES. Named in config, implemented here, because a recipe is the shape of
+a measurement rather than a property of one dataset:
 
 ===================  =========================================================
-``product``          ``Coverage * (1 - Uniformity) * Phase purity``      v2 only
-``log10_product``    ``log10(Implied Voc) + log10(Photoconductance)``    v2 only
-``mean``             the mean of every input, all of them required       v3
-``mean_of_present``  mean of whichever of ``T1..T4`` were measured       both
+``stored``           the column IS the value; no arithmetic                 v4
+``mean_of_present``  mean of whichever of ``T1..T4`` were measured           all
+``mean``             the mean of every input, all of them required           v3
+``product``          the product of every input                             v2
+``log10_product``    the sum of the inputs' base-10 logarithms              v2
 ===================  =========================================================
 
-Two objective contracts are live at once and the recipes serve both.  The first
-campaign (``d2d-objectives-v2-nm-thickness``) multiplied its uniformity terms and
-took a log10 product for optoelectronic; the second
-(``d2d-objectives-v3-test``) averages instead, on a workbook whose columns moved.
-Recipes are never edited in place for a new dataset -- a redefined objective with
-an unchanged name makes every cross-round hypervolume incomparable while every
-plot still renders -- so a new shape arrives as a new recipe plus a new
-``contract_version``.
-
-``log10_product`` sums two logarithms rather than logging the product, which is
-algebraically identical and cannot overflow on the way there.
+**The v2 and v3 recipes are retained and tested, not dead weight.** Their configs
+are archived but must stay loadable, because a contract whose numbers cannot be
+regenerated is a contract nobody can audit. ``log10_product`` sums logarithms
+rather than logging a product, which is algebraically identical and cannot
+overflow on the way there.
 
 ``mean_of_present`` needs at least one reading; every other recipe needs all of
-theirs.  **Blank means not measured, never zero.**  Thickness rows carry three or
-four readings depending on the film, so a recipe that demanded all four would
-reject the campaign; a blank ``Coverage``, by contrast, is a missing measurement
-and ``mean`` refuses it.
+theirs. **Blank means not measured, never zero.** Thickness rows carry three or
+four readings depending on the film, so a recipe demanding all four would reject
+the campaign; a blank ``Coverage`` is a missing measurement and ``mean`` refuses
+it.
 
-Two input transforms carry a threshold, and both come from the v3 workbook:
+Two input transforms carry a threshold, ``clamped_complement`` and
+``capped_ratio``. Both exist for archived contracts only. Nothing live uses them,
+and a live contract that needs one should think hard first: a clamp that binds is
+information being discarded, and on the v3 data it bound on two of fifteen rows.
 
-* ``clamped_complement`` reproduces its ``Uniformity (clamped to 0.99)`` column,
-  which pins a reading above 1 to 0.99 before taking the complement.  Two of the
-  fifteen rows are clamped (uniformity 1.659 and 1.277).  The clamp is strictly
-  above the threshold, so an exact 1.0 keeps its own value and yields a
-  complement of exactly 0.
-* ``capped_ratio`` reproduces ``Normalized Voc (to 1.4V)``.  **The cap is a
-  deliberate divergence from the sheet**, which divides by 1.4 with no ceiling.
-  It is dormant on the current data -- the largest observed reading is 1.135 --
-  so the cross-check below agrees exactly today and would start warning the day a
-  reading exceeds 1.4.  That is the intended behaviour: the divergence announces
-  itself rather than being discovered later.
-
-Cross-check tolerances differ by what the stored cell is, and the audited numbers
-are the reason:
-
-* a live formula (``Z``, ``R``) should agree to floating-point noise;
-* a full-precision paste (``AA``) agrees to 1.8e-15 today, and if it ever stops
-  agreeing that is exactly the staleness worth hearing about;
-* a deliberately rounded cell (``X`` is ``ROUND(mean(T1..T4))``) can differ by
-  half a unit and still be correct.
+CROSS-CHECKS AND FINGERPRINTS are two different instruments and the difference
+matters. A ``cross_check`` compares a computed value against a stored one and so
+only exists where Python computes -- thickness. A ``formula_fingerprint`` reads a
+column's FORMULA TEXT, never evaluates it, and reports when that text changes; it
+is what a frozen objective has instead of a cross-check. It notices a changed
+DEFINITION, not a stale VALUE, and that gap is inherent to reading a number
+somebody else computes.
 """
 
 from __future__ import annotations
