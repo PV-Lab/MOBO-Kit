@@ -67,17 +67,52 @@ def config() -> dict:
 def test_three_contracts_exist_and_only_one_is_active(config) -> None:
     """Naming them is not bookkeeping. An objective that keeps its name while
     changing its construction makes every cross-contract number incomparable
-    while every plot still renders."""
+    while every plot still renders.
+
+    The live contract became ``-nomean`` on 2026-09-06, when the thickness mean
+    function was withdrawn. That is a MODEL change rather than an objective
+    redefinition -- the three quantities are unchanged -- but it moves every
+    fitted number on the learnable axis (+0.7423 to +0.5814) and therefore every
+    hypervolume, so it earns a version. This assertion failing is this test doing
+    its job; update it deliberately, never to make a run go green.
+    """
     v3 = load_campaign_config(V3_CONFIG_PATH)
     archived = load_campaign_config("configs/campaign_d2d_perovskite.yaml")
 
-    assert config["objectives"]["contract_version"] == "d2d-objectives-v4-final"
+    assert config["objectives"]["contract_version"] == "d2d-objectives-v4-final-nomean"
     assert v3["objectives"]["contract_version"] == "d2d-objectives-v3-test"
     assert archived["objectives"]["contract_version"] == "d2d-objectives-v2-nm-thickness"
 
     assert config["campaign"]["status"] == "active"
     assert v3["campaign"]["status"] == "archived"
     assert archived["campaign"]["status"] == "archived"
+
+
+def test_no_objective_declares_a_mean_function(config) -> None:
+    """The live campaign carries NO physics prior, by decision on 2026-09-06.
+
+    The thickness prior ``log T ~ log(speed_1) + log(precur_conc)`` was withdrawn
+    after its justification failed: the fitted speed exponent's 95% interval is
+    [-0.385, -0.126], which excludes spin-coating theory's -0.5 by 4.1 standard
+    errors, and fixing the exponents at their theoretical values scores +0.5600
+    against +0.5823 for no trend at all.
+
+    ``structured_mean`` stays wired and tested for a prior that clears the bar --
+    established physics, declared before fitting, beating matched-flexibility
+    controls, and surviving a permutation test. Nothing currently does. If this
+    test fails, someone has added one; make them show the four pieces of evidence
+    before updating it.
+    """
+    from mobo_kit.structured_mean import mean_spec_from_config
+
+    declared = {
+        entry["name"]: mean_spec_from_config(entry)
+        for entry in config["objectives"]["specs"]
+    }
+    assert declared == {name: None for name in declared}, (
+        f"a mean function reappeared: "
+        f"{ {k: v for k, v in declared.items() if v is not None} }"
+    )
 
 
 def test_the_launcher_defaults_to_the_live_contract() -> None:

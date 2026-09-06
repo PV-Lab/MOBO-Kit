@@ -115,7 +115,7 @@ inputs:
 # contracts, the model trains on raw nanometres rather than on the score, and the
 # recomputation is what lets `T anom` be excluded and reported.
 objectives:
-  contract_version: d2d-objectives-v4-final
+  contract_version: d2d-objectives-v4-final-nomean
   scaling_mode: fixed_affine
   specs:
   - name: uniformity
@@ -137,9 +137,15 @@ objectives:
     # 15 rows: 0.599 to 0.882.
     lower_anchor: 0.0
     upper_anchor: 1.0
-    # MEASURED ON THESE ROWS, 2026-09-02. Plain GP LOO R2 -0.4778 against a null
-    # of -0.1480: no learnable signal, for the third contract running. R1 is
+    # MEASURED ON THESE ROWS. Plain GP LOO R2 -0.4688 against a null of -0.1480:
+    # no learnable signal, for the third contract running. R1 is
     # exploration-dominated for this objective by design.
+    #
+    # The workbook was revised on 2026-09-03: `Phase purity` moved on samples 4
+    # and 12 (0.7951 -> 0.7997 and 0.7800 -> 0.7882), which moves this column
+    # through `=(L+O+P)/3`. The number was -0.4778 on the previous copy. Nothing
+    # else on the sheet changed, and no verdict moved: the shift is 0.0090
+    # against a resolution sd of 0.236.
     signal_status: exploration_only
 
   - name: optoelectronic
@@ -188,8 +194,26 @@ objectives:
     # in the exp(-0.5*((T-c)/sigma)^2) convention used here that is 250/sqrt(2)
     sigma: 176.7766952966369
     equivalent_workbook_formula: "EXP(-(((AH-650)/250)^2))"
-    # MEASURED ON THESE ROWS, 2026-09-02. The only objective with signal, for the
-    # third contract running: plain GP +0.5814 against a null of -0.1480.
+    # The only objective with signal, for the third contract running: plain GP
+    # +0.5814.
+    #
+    # NOTE THAT -0.1480 IS NOT THE BAR. See "The leave-one-out null was never a
+    # significance threshold" in docs/CAMPAIGN_STATUS.md -- 28.7% of pure-noise
+    # shuffles beat it. This axis earns `learnable` on its RANK PERMUTATION TEST,
+    # which was always the right instrument and is now the only one.
+    #
+    # RE-MEASURED 2026-09-06 on the PLAIN GP, after the mean function was
+    # withdrawn, because the earlier verdict was measured with it:
+    #
+    #   observed rank rho  +0.8036
+    #   null mean          -0.1762  (sd 0.4070)
+    #   null 95th pct      +0.5607   <- the honest single-candidate bar
+    #   exceedances        9 of 1800
+    #   p                  0.0056   95% CI [0.0021, 0.0090]
+    #
+    # Identical p to the structured version's, and the observed rank clears the
+    # null's own 95th percentile by 0.24. Removing the prior cost R2, not the
+    # verdict.
     signal_status: learnable
     # NOT frozen, and the only objective still computed in Python. Its definition
     # has been stable across all three contracts and the recomputation earns its
@@ -214,34 +238,40 @@ objectives:
         - {column: "Thickness (avg)", atol: 1.0e-9}
       spread_warning_ratio: 0.25
     replicate_aggregate: mean_of_log
-    # KEPT, on the rank permutation rather than on R2 -- the same standing it has
-    # had on every contract. Spin-coating physics fixes the two predictors before
-    # any fitting, so this is not selection on the outcome.
+    # NO MEAN FUNCTION. Withdrawn 2026-09-06 by the group's decision, after the
+    # physics justification failed its one clean test.
     #
-    # Intake 2026-09-02 left it INCONCLUSIVE ON R2: plain +0.5814, structured
-    # +0.7422, a swing of +0.1608 against a resolution floor of 0.236. That is not
-    # a verdict, it is a statement that R2 cannot resolve it at N=15.
+    # What was here: `log T ~ log(speed_1) + log(precur_conc)`, declared from
+    # spin-coating theory and carried unchanged through all three contracts. It
+    # measured +0.7423 against the plain GP's +0.5823.
     #
-    # The permutation adjudicated, and it holds on this contract too:
+    # WHY IT WENT. The supporting claim was that the fitted speed exponent agreed
+    # with Meyerhofer's `T ~ omega^-0.5`. It does not. OLS on the 15 films gives
+    # the exponent as -0.2554 with a standard error of 0.0593, a 95% interval of
+    # [-0.385, -0.126] -- the textbook -0.5 sits OUTSIDE it, 4.1 standard errors
+    # away. Fixing the exponents at their theoretical values (-0.5 and +1.0) and
+    # fitting only an intercept scores +0.5600, WORSE than having no trend at all.
+    # So the theory does not predict these films; the concentration exponent
+    # (+1.313, CI [0.932, 1.694]) does contain the mass-balance +1.0, which is
+    # consistent with the antisolvent quench freezing the film before viscous
+    # thinning completes.
     #
-    #   observed rank rho  +0.6500
-    #   null mean          -0.1892  (sd 0.2944)
-    #   exceedances        9 of 1800
-    #   p                  0.0056   95% CI [0.0021, 0.0090]
+    # WHAT WAS TRUE, and is worth recording because it is the argument for ever
+    # bringing this back: the VARIABLE choice was real even though the magnitudes
+    # were not physics. Four matched-flexibility control pairs -- three fitted
+    # parameters each, physically unmotivated -- scored +0.3706, +0.2960, +0.3174
+    # and +0.4033, all BELOW the plain GP. It is not the case that any fitted
+    # two-term trend helps; most actively hurt.
     #
-    # Reproduce with:
-    #   python scripts/permutation_rank_test.py --objective thickness --permutations 1800
+    # THE COST, stated plainly: thickness LOO R2 falls from +0.7423 to +0.5823 and
+    # rank from +0.864 to +0.804. It remains the only objective with signal and it
+    # still clears its rank permutation test. The gain never had a permutation test
+    # of its own, only an R2 comparison, which this project now knows is the weaker
+    # instrument.
     #
-    # v3's p was 0.0028 on its own rows; that verdict did not transfer and this one
-    # was measured fresh. Rank is the right statistic because rank is what the
-    # acquisition consumes. Do not quote the +0.1608 swing as evidence.
-    mean_function:
-      response: log
-      features:
-        - column: speed_1
-          transform: log
-        - column: precur_conc
-          transform: log
+    # `structured_mean.py` stays in the package, wired and tested, for a future
+    # prior that earns its place. Reproduce the numbers above with:
+    #   python scripts/raw_component_screen.py --candidates thickness_nm
 
 # Reference point in UTILITY space, carried over verbatim. All three objectives
 # live natively in [0, 1], so no axis dominates.
@@ -252,20 +282,36 @@ rounds:
     method: ucb_hvi
     batch_size: 5
     replicates_per_condition: 3
-    # KEPT at 36, and the rationale is re-earned rather than inherited. It was
-    # chosen for the v3 dry run because two of three objectives carried no
-    # learnable signal, which makes heavy exploration the right posture. Both have
-    # been renormalised since -- including the photoconductance fix that was the
-    # recorded trigger to revisit this -- and on v4 still only thickness beats the
-    # null. Had two or more axes become learnable, this would have come back toward
-    # the sweep-settled beta = 4.
+    # LOWERED from 36 to 4 on 2026-09-03, by the group's decision.
     #
-    # Determined originally by a sweep of box plots and heat maps (2-D slices
-    # through the higher-dimensional GP) over beta 9..49 and radius 0.05..0.45.
-    # That sweep could not RANK cells -- spread 0.0065 against a trial sd of
-    # 0.010-0.027 -- so this is a declared policy about how much to explore, not a
-    # measured optimum. Note that local penalization is inert at this beta.
-    beta: 36.0
+    # 36 was chosen for the v3 dry run on the argument that two of three
+    # objectives carried no learnable signal, so heavy exploration was the right
+    # posture. That argument has been overtaken. On the extended C1&C2 sheet the
+    # two dead axes are dead for reasons beta cannot address: the optoelectronic
+    # score is 84.5% between-campaign drift (recipe ICC 0.000, and the GP refuses
+    # to fit it at all), and uniformity is reproducible (ICC 0.730) but not
+    # predictable from ten inputs at fifteen distinct recipes. Exploring harder
+    # buys nothing against either, and it costs real batch quality.
+    #
+    # What it costs, measured on this workbook at seed 73 (scripts in
+    # docs/, reproduced by the beta scan):
+    #
+    #   beta  radius   HV gain   edge coords/50   spacing   sd ratio
+    #      4    0.25   +0.0009               11     0.781      5.8x
+    #      9    0.25   +0.0000               15     0.882      6.2x
+    #     36    0.25   +0.0000               18     1.213      6.5x
+    #
+    # `edge coords` counts how many of the 5 x 10 proposed coordinates are pinned
+    # to a grid bound. At 36 the acquisition spends the batch on the corners of
+    # the box; at 4 it proposes films that sit inside it. beta = 4 is also the
+    # value the original 108-cell box-plot/heat-map sweep settled on before v3's
+    # no-signal verdict overrode it.
+    #
+    # STILL A DECLARED POLICY, NOT A MEASURED OPTIMUM. The +0.0009 HV gain is far
+    # below the trial sd of 0.010-0.027 that sweep measured; it is a tiebreak, not
+    # evidence. What IS evidence is the edge count and the spacing, which are
+    # facts about the batch at a fixed seed rather than single-seed hypervolume.
+    beta: 4.0
     candidate_pool_size: 32768
     posterior_samples: 256
     moment_method: monte_carlo
@@ -309,10 +355,24 @@ review:
 local_penalization:
   distance_metric: normalized_euclidean
   dimension_weights: null
-  # PROVISIONAL, with beta above. Radius binds less as beta rises; at beta = 36 on
-  # v3 the achieved batch spacing was 1.091 against this 0.35, so the knob had
-  # nothing to act on.
-  radius: 0.35
+  # 0.35 -> 0.25 on 2026-09-03, together with beta.
+  #
+  # THIS KNOB WAS INERT AND NOW IS NOT, which is the whole reason to set it
+  # deliberately. At beta = 36 the scan returns bit-identical batches at radius
+  # 0.15, 0.25 and 0.35 -- same spacing 1.213, same 18 edge coordinates, same
+  # utilities -- because the acquisition was already spreading the batch further
+  # than any of those radii asked for. At beta = 4 it bites:
+  #
+  #   radius   spacing   edge coords/50
+  #     0.15     0.682               13
+  #     0.25     0.781               11
+  #     0.35     0.941               13
+  #
+  # 0.25 is the cell with the fewest coordinates pinned to a grid bound. That is a
+  # weak reason on its own -- 11 against 13 at one seed -- but it is the only
+  # discriminating measurement available, and the alternative is inheriting a
+  # number chosen while the knob did nothing.
+  radius: 0.25
   min_batch_distance: 0.15
   min_observed_distance: 0.0
 

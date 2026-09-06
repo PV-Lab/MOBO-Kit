@@ -46,9 +46,36 @@ RESOLUTION_REFERENCE_N = 15
 def null_loo_r2(n: int) -> float:
     """What predicting the leave-one-out mean scores, independent of the data.
 
-    ``1 - (N/(N-1))^2``: -0.148 at 15, -0.105 at 21, -0.069 at 31.  A model below
-    this learned nothing, and a NEGATIVE LOOCV Spearman is the signature of that
-    rather than a sign error.  It moves with N, so recompute rather than reuse.
+    ``1 - (N/(N-1))^2``: -0.148 at 15, -0.105 at 21, -0.069 at 31.  It moves with
+    N, so recompute rather than reuse.
+
+    **THIS IS NOT A SIGNIFICANCE THRESHOLD, and this project read it as one for a
+    year.**  It is the score of ONE SPECIFIC PREDICTOR -- predict every held-out
+    row with the mean of the others -- and a fitted GP does not behave like that
+    predictor.  Measured on the v4 campaign, 2026-09-04, 300 permutations of a
+    real objective with the campaign's own model variant:
+
+        fitted GP under permuted y   median -0.4210   95th percentile +0.2890
+        fraction of pure-noise draws scoring above -0.1480:   28.7%
+
+    So "beats the null" happens better than one time in four when there is no
+    signal at all.  The GP makes real predictions with about six times the spread
+    of the constant predictor; they are noise, and they land FURTHER from y, which
+    is why the empirical null sits well below this number while its upper tail
+    sits well above it.
+
+    Below this value a model has certainly learned nothing.  ABOVE it means
+    nothing on its own.  The honest single-candidate bar is the 95th percentile of
+    that candidate's own permutation null -- ``scripts/raw_component_screen.py
+    --calibrate`` measures it -- and the project's standing adjudicator for a
+    real verdict is the rank permutation test in
+    ``scripts/permutation_rank_test.py``, which was always the right instrument
+    and is now the only one.
+
+    A declared mean function LOWERS this empirical null rather than raising it:
+    an OLS trend fitted on N-1 rows of shuffled y is a noise fit, and
+    extrapolating it to the held-out row adds error.  Median goes -0.4075 with no
+    mean, -0.4368 with one feature, -0.5384 with two.
     """
     if n < 2:
         raise ValueError("The leave-one-out null needs at least two rows.")

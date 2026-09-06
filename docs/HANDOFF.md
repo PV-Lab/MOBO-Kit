@@ -87,7 +87,7 @@ python scripts/permutation_rank_test.py --objective thickness --permutations 180
 python scripts/generate_round_report.py --workbook "local_inputs/Final Summary Table.xlsx"
 
 # the campaign loop against a frozen oracle, at the ratified knobs
-python scripts/plot_round_simulation.py --workbook "local_inputs/Final Summary Table.xlsx" --cell 0.35,36
+python scripts/plot_round_simulation.py --workbook "local_inputs/Final Summary Table.xlsx" --cell 0.25,4
 ```
 
 `launch_mobo_kit.bat` / `.command` is the one-button path: check the workbook,
@@ -105,18 +105,33 @@ that they agree.
 Measured on v4's 15 rows by `intake_new_data.py`, against a leave-one-out null of
 **-0.1480** and a resolution floor of **+-0.236**:
 
-| objective | plain GP | with mean function | verdict |
+| objective | plain GP | mean function | verdict |
 |---|---:|---:|---|
-| uniformity | **-0.4778** | — | below the null → **exploration only** |
-| optoelectronic | **-0.7038** | — | below the null → **exploration only** |
-| thickness | **+0.5814** | **+0.7422** | **learnable**; swing +0.1608, inside the floor |
+| uniformity | **-0.4688** | none | below the null → **exploration only** |
+| optoelectronic | **-0.7038** | none | below the null → **exploration only** |
+| thickness | **+0.5814** | **none — withdrawn 2026-09-06** | **learnable**, on its rank permutation |
 
-**Still only one learnable axis**, as on v3 — and that decides the knobs.
-`beta = 36` was chosen because two of three objectives carried no signal, which
-makes heavy exploration the right posture. Both objectives have been renormalised
-since, so that rationale had to be re-earned; it was. **Keep `beta = 36` and
-`radius = 0.35`.** Had two or more axes become learnable, the recommendation would
-have been to return toward the sweep-settled `beta = 4`.
+**No objective carries a physics prior any more.** The thickness mean function
+`log T ~ log(speed_1)+log(precur_conc)` was withdrawn on 2026-09-06: its
+justification was that the fitted speed exponent agreed with theory's -0.5, and
+the 95% interval on that exponent is [-0.385, -0.126], which excludes -0.5 by 4.1
+standard errors. Fixing the exponents at the theoretical values scores +0.5600,
+worse than no trend at all. Full table in CAMPAIGN_STATUS.md.
+
+**Still only one learnable axis**, as on v3 — but that no longer argues for heavy
+exploration. `beta = 36` was chosen on the premise that exploring wider was how the
+two dead axes would come alive. The extended C1&C2 sheet (45 rows = 15 recipes made
+three times) shows it is not: optoelectronic is 84.5% between-campaign drift with a
+recipe ICC of **0.000**, and uniformity is reproducible (ICC **0.730**) but not
+predictable from ten inputs at fifteen distinct recipes. Neither is reachable by
+any beta.
+
+**The campaign runs `beta = 4.0` and `radius = 0.25`** as of 2026-09-03. At
+beta = 36 the radius knob was provably inert — radii 0.15, 0.25 and 0.35 return
+bit-identical batches — and 18 of 50 proposed coordinates sat on a grid bound;
+at beta = 4 / radius 0.25 that falls to 11. See CAMPAIGN_STATUS.md, "Are
+beta = 4.0 and radius = 0.25 defensible?", including why the hypervolume column
+of that table must not be read as a ranking.
 
 **Uniformity and optoelectronic are read from the workbook, not computed.** No
 independent recomputation exists under this contract. The formula fingerprints
@@ -156,7 +171,13 @@ evidence.** Measured on v4: observed rank ρ **+0.6500**, null mean −0.1892
 
 These are method, and they carry across both campaigns.
 
-- **Null, −0.148 at N=15.** Predicting the leave-one-out mean gives
+- **Null, −0.148 at N=15 — AND IT IS NOT A SIGNIFICANCE THRESHOLD.** Measured
+  2026-09-04, 300 permutations with the campaign's own model: the fitted GP's
+  null has median −0.4210 and 95th percentile **+0.2890**, and **28.7% of
+  pure-noise shuffles beat −0.1480**. Below it a model has certainly learned
+  nothing; above it means nothing on its own. Use the rank permutation test,
+  or `scripts/raw_component_screen.py --calibrate` for a candidate's own bar.
+  Predicting the leave-one-out mean gives
   `1 − (N/(N−1))²`. A model below it learned nothing, and a negative LOOCV
   Spearman is that signature rather than a sign bug. It moves with N — recompute.
 - **Sampling, ±0.236.** Parametric bootstrap, 4000 resamples at N=15. Two LOO R²

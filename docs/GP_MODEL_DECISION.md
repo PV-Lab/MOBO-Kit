@@ -162,8 +162,15 @@ nanometres sees a smooth trend.
 
 Raw thickness is the most predictable quantity in the campaign:
 `log T ~ log(speed_1) + log(precur_conc)` gives LOO R² **+0.449**, Spearman
-**+0.714**, permutation p **0.0067**, with fitted speed exponent −0.38 against
-spin-coating theory's −0.5.
+**+0.714**, permutation p **0.0067**.
+
+> **CORRECTION, 2026-09-06.** This paragraph used to end "with fitted speed
+> exponent −0.38 against spin-coating theory's −0.5", offered as evidence that the
+> trend was physically grounded. **It is not evidence.** On the v4 workbook the
+> exponent's 95% interval is [−0.385, −0.126], which EXCLUDES −0.5 by 4.1 standard
+> errors, and fixing the exponents at their theoretical values scores +0.5600
+> against +0.5823 for no trend at all. The mean function has been withdrawn from
+> the live config; see CAMPAIGN_STATUS.md, "The thickness prior was half-earned".
 
 Predicting the score, exact leave-one-out (`dim_scaled_prior`):
 

@@ -152,7 +152,7 @@ uncertainty, acquisition surface and selected batch.
 
 ## How beta and radius were chosen
 
-The live campaign runs **beta = 36** and **radius = 0.35**. They were determined
+The live campaign runs **beta = 4.0** and **radius = 0.25**. They were determined
 by a sweep over two instruments on the campaign's own data: per-round utility
 **box plots** across a grid of **beta from 9 to 49** and **radius from 0.05 to
 0.45**, and **heat maps** -- 2-D slices through the higher-dimensional
@@ -165,14 +165,17 @@ Two things to know before quoting that choice.
 **The sweep could not rank the cells.** The whole spread across betas was 0.0065
 against a trial-to-trial standard deviation of 0.010--0.027, and the best cell was
 a different (beta, radius) in every trial. So this is a declared policy about how
-much to explore -- heavy exploration, since two of the three objectives carry no
-learnable signal -- and not a measured optimum.
+much to explore, not a measured optimum.
 
-**Local penalization is inert at this beta.** Achieved minimum batch spacing is
-1.091, about three times the 0.35 radius, so the knob has nothing to act on. That
-is expected: the sweep showed radius binding less as beta rises. It also means the
-batch runs to the edges of the input ranges, which is worth checking before
-fabricating.
+**The campaign ran at beta = 36 from 2026-08 to 2026-09-03**, on the argument that
+two of three objectives carried no learnable signal and heavy exploration was
+therefore the right posture. That was retired when 45 rows of repeated recipes
+showed *why* those two axes are unlearnable -- one is dominated by
+between-campaign measurement drift, the other is reproducible but too sparsely
+sampled -- neither of which more exploration reaches. At beta = 36 the radius knob
+was also provably inert: radii 0.15, 0.25 and 0.35 returned bit-identical batches,
+and 18 of 50 proposed coordinates sat on a grid bound. At beta = 4 / radius 0.25
+that falls to 11. See `docs/CAMPAIGN_STATUS.md` for the table and its caveats.
 
 `docs/CAMPAIGN_STATUS.md` carries the full record, including the two triggers for
 revisiting the choice.

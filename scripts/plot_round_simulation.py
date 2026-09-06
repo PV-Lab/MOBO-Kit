@@ -913,7 +913,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     # its betas stop at 25. This runs exactly the cell that was decided.
     parser.add_argument(
         "--cell", default=None, metavar="RADIUS,BETA",
-        help="run one arbitrary cell instead of the sweep, e.g. 0.35,36",
+        help="run one arbitrary cell instead of the sweep, e.g. 0.25,4",
     )
     parser.add_argument(
         "--full-grid", action="store_true",

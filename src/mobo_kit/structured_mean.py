@@ -5,18 +5,37 @@ rediscovering a trend that is already known from process physics.  Giving it tha
 trend as a mean function, and letting the GP model only the residual, roughly
 doubles the leave-one-out fit on this campaign's data.
 
-The two objectives want different shapes, which is the point of making this
-declarative rather than hard-coded:
+EVERY NUMBER BELOW IS FROM THE FIRST CAMPAIGN, contract
+``d2d-objectives-v2-nm-thickness``, on ``Summary Table.xlsx``.  Objectives have
+been redefined twice since.  Read them as the record of how these shapes were
+chosen, NOT as current fits -- and see the second bullet for one that has since
+been measured false.
 
 * **thickness** -- ``log T ~ log(speed_1) + log(precur_conc)``.  Spin-coating
-  theory gives ``T ~ omega^-0.5``; the measured exponent is -0.38.  Neither term
-  alone is worth much (LOO R2 +0.159 and +0.187); the *pair* carries the signal
-  (+0.449).  Modelled in log space, so the response is lognormal.
-* **optoelectronic** -- a single linear term on ``anneal_temp`` and nothing else
-  (LOO R2 +0.244).  Every addition tested made it worse, and an Arrhenius ``1/T``
-  form bought nothing over plain linear temperature (+0.226).
+  theory gives ``T ~ omega^-0.5``; the measured exponent was -0.38 on v2 and is
+  -0.255 on the current workbook.  Neither term alone is worth much (LOO R2
+  +0.159 and +0.187); the *pair* carries the signal (+0.449 on v2, and the shape
+  still holds on v4).  Modelled in log space, so the response is lognormal.
+  **WITHDRAWN FROM THE LIVE CONFIG 2026-09-06.**  The shape transfers, but the
+  physics justification does not: the exponent's 95% interval on v4 is
+  [-0.385, -0.126], which EXCLUDES the textbook -0.5 by 4.1 standard errors, and
+  fixing the exponents at theory scores +0.5600 against +0.5823 for no trend at
+  all.  What survives is that the VARIABLE choice beats matched-flexibility
+  controls (four unmotivated pairs scored +0.30 to +0.40, all below the plain GP)
+  -- the magnitudes were fitted, not predicted.  This module stays wired and
+  tested for a prior that clears the bar; nothing currently does.
+* **optoelectronic** -- a single linear term on ``anneal_temp`` and nothing else,
+  LOO R2 +0.244 ON V2.  **IT DOES NOT TRANSFER AND IS NO LONGER DECLARED
+  ANYWHERE.**  v2's optoelectronic was ``log10(Voc x Photoconductance)``; the
+  current contract's is a different quantity, and on it the same mean function
+  scores **-1.0721** (and -0.7452 on raw Voc), far below even a constant.  The
+  key was removed from the live config on the v3 intake verdict and nothing since
+  has argued for reinstating it.  Measured 2026-09-04; reproduce with
+  ``scripts/raw_component_screen.py --spec
+  '[{"name":"x","expr":"score_opto","mean_features":["anneal_temp"]}]'``.
 
-Do not assume the two-term shape generalises: these are opposite patterns.
+Do not assume the two-term shape generalises: these are opposite patterns, and
+one of them turned out to be about an objective that no longer exists.
 
 The linear coefficients are refit on the training rows of every fold, so
 cross-validation stays honest.  Feature *choice* is fixed in configuration from

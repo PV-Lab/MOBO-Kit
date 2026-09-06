@@ -71,11 +71,17 @@ filled in there, and the source workbook is never opened for writing.
 `scripts/intake_new_data.py`, exact leave-one-out, null −0.1480 at N=15,
 resolution floor ±0.236:
 
-| objective | plain GP | with mean function | verdict |
+| objective | plain GP | mean function | verdict |
 |---|---:|---:|---|
-| uniformity | **−0.4778** | — | below the null, **exploration only** |
-| optoelectronic | **−0.7038** | — | below the null, **exploration only** |
-| thickness | **+0.5814** | **+0.7422** | **learnable**; swing +0.1608, inside the floor |
+| uniformity | **−0.4688** | none | below the null, **exploration only** |
+| optoelectronic | **−0.7038** | none | below the null, **exploration only** |
+| thickness | **+0.5814** | **none — withdrawn 2026-09-06** | **learnable**, on its rank permutation |
+
+**The thickness mean function was withdrawn on 2026-09-06.** It measured +0.7422
+against the plain GP's +0.5814, but its stated justification — that the fitted
+speed exponent agreed with spin-coating theory's −0.5 — is false. See "The
+thickness prior was half-earned" below. Nothing else in the campaign declares one,
+so **no objective now carries a physics prior.**
 
 All 15 rows are on-grid, all satisfy all three constraints, and both anchors hold
 (uniformity 0.599–0.882, optoelectronic 0.477–0.762). Sample 2 was
@@ -103,22 +109,208 @@ against its own raw measurement (Spearman −0.5484, p = 0.0343). On v4 the same
 comparison gives **+1.0000**. The diagnostic stays on because the failure is
 silent when it recurs.
 
-### The knob decision: keep beta = 36
+### The knob decision: beta = 36 → 4, radius = 0.35 → 0.25 (2026-09-03)
 
-The revisit trigger recorded under v3 was "when the photoconductance
-normalisation is fixed and optoelectronic may become learnable". **It fired, and
-the answer is to keep the knob.**
+**Superseded.** The reasoning below is kept because it is what the decision was
+reversed *from*.
 
-`beta = 36` was chosen because two of three objectives carried no learnable signal,
-which makes heavy exploration the right posture. On v4, still **only thickness
-beats the null** — optoelectronic is in fact further below it than on v3 (−0.7038
-against −0.5842). The rationale is re-earned rather than inherited. Had two or
-more axes become learnable, the recommendation would have been to return toward
-the sweep-settled `beta = 4`.
+> The revisit trigger recorded under v3 was "when the photoconductance
+> normalisation is fixed and optoelectronic may become learnable". It fired, and
+> the answer was to keep the knob. `beta = 36` was chosen because two of three
+> objectives carried no learnable signal, which makes heavy exploration the right
+> posture; on v4, still only thickness beat the null. Had two or more axes become
+> learnable, the recommendation would have been to return toward the
+> sweep-settled `beta = 4`.
 
-Both recorded consequences stand: local penalization is inert at this beta, and
-the batch runs to the range edges. The second revisit trigger — R1 measurements
-replacing the oracle — has not fired.
+That argument had a hidden premise: **that heavy exploration was how the two dead
+axes would come alive.** The extended C1&C2 sheet (see "The same 15 recipes, made
+three times") shows it is not, because it shows *why* they are dead:
+
+* **optoelectronic** is 84.5% between-campaign drift. Recipe ICC **0.000**, F 0.18,
+  p 0.9992; the GP refuses to fit it in 15 of 15 folds. No β reaches this.
+* **uniformity** is reproducible (ICC **0.730**, p < 0.00001) but not predictable
+  from ten inputs at fifteen distinct recipes (leave-one-recipe-out R² −0.243).
+  It needs more distinct recipes, not wider ones.
+
+So exploration buys nothing against either axis, and the batch quality it costs is
+measurable. **beta = 4.0 and radius = 0.25**, which is where the original
+108-cell sweep sat before v3's no-signal verdict overrode it.
+
+The second revisit trigger — R1 measurements replacing the oracle — has still not
+fired.
+
+### The thickness prior was half-earned, and it has been withdrawn (2026-09-06)
+
+`log T ~ log(speed_1) + log(precur_conc)` was declared from spin-coating theory in
+commit `600ef60` and carried unchanged through all three contracts. It has been
+removed from the live config by the group's decision. Two measurements decided it.
+
+**The physics claim is false for these films.** OLS on the 15 films, no replicates
+needed for a standard error:
+
+| coefficient | estimate | std err | 95% CI | theory |
+|---|---:|---:|---|---|
+| log(speed_1) | **−0.2554** | 0.0593 | **[−0.385, −0.126]** | −0.5 — **outside the interval, 4.1 SE away** |
+| log(precur_conc) | +1.3130 | 0.1747 | [+0.932, +1.694] | +1.0 — inside |
+
+Mass balance holds; Meyerhofer's viscous-thinning scaling does not. That is what
+you would expect if the antisolvent quench freezes the film before the thinning
+stage completes. **Fixing the exponents at their theoretical values and fitting
+only an intercept scores +0.5600 — worse than having no trend at all (+0.5823).**
+So the docs' long-standing citation of "−0.38 against theory's −0.5" as supporting
+evidence was never evidence; it has been removed from `GP_MODEL_DECISION.md`.
+
+**What was true, and is the argument for ever bringing a prior back.** The
+*variable choice* was real even though the magnitudes were not physics. Four
+matched-flexibility controls — three fitted parameters each, physically
+unmotivated pairs — all scored below the plain GP:
+
+| trend | free params | LOO R² |
+|---|---:|---:|
+| plain GP, no trend | 0 | +0.5823 |
+| fitted log(speed_1) + log(precur_conc) | 3 | **+0.7680** |
+| **theory, exponents FIXED at −0.5 / +1.0** | 1 | **+0.5600** |
+| control: fitted log(anti_vol) + log(time_1) | 3 | +0.3706 |
+| control: fitted log(anneal_time) + log(anti_time) | 3 | +0.2960 |
+| control: fitted log(anneal_temp) + log(anti_vol) | 3 | +0.3174 |
+| control: fitted log(time_1) + log(anneal_temp) | 3 | +0.4033 |
+
+It is **not** the case that any fitted two-term trend helps; most actively hurt.
+
+**The cost, stated plainly:** thickness LOO R² falls +0.7423 → +0.5814 and rank
++0.864 → +0.804. It remains the only objective with signal. The withdrawn gain
+never had a permutation test of its own, only an R² comparison, which this project
+now knows is the weaker instrument.
+
+`structured_mean.py` stays in the package, wired and tested, for a prior that earns
+its place. The bar: established physics, declared before fitting, beating
+matched-flexibility controls, and surviving a permutation test.
+
+### The leave-one-out null was never a significance threshold (2026-09-04)
+
+**This corrects a reading this project has used since the first campaign.**
+
+`1 − (N/(N−1))² = −0.1480` is the score of ONE predictor: predict every held-out
+film with the mean of the other fourteen. It has been read as the bar a model must
+clear. **A fitted GP does not behave like that predictor**, so it is not that bar.
+
+Measured two ways that agree — an adversarial verifier at 500 permutations and an
+independent reimplementation at 300, different RNG streams:
+
+| | median | 95th percentile | % of pure-noise draws above −0.1480 |
+|---|---:|---:|---:|
+| fitted GP, no mean function | −0.4075 / −0.4210 | +0.2309 / +0.2890 | 27.4% / **28.7%** |
+| with a 1-variable mean function | −0.4368 | +0.1267 … +0.1944 | 20.6 – 23.6% |
+| with a 2-variable mean function | −0.5384 / −0.5443 | +0.0752 … +0.1337 | 16.6 – 18.2% |
+
+**More than one shuffle in four beats −0.1480 with no signal present at all.** The
+GP's predictions under permuted y have roughly six times the spread of the
+constant predictor's; they are noise, and they land further from y — which is why
+the empirical null sits far below −0.1480 while its upper tail sits far above it.
+
+**What is still true.** Below −0.1480 a model has certainly learned nothing, so
+every "exploration only" verdict in this document stands: uniformity −0.4688,
+optoelectronic −0.7038 and the stored thickness score −0.2020 are all below the
+*median* of their own nulls. **What is not true** is the converse. A candidate
+above −0.1480 has shown nothing by that fact alone, and any argument of the form
+"it beat the null" carries no evidential weight.
+
+**A mean function LOWERS the null rather than raising it** — an OLS trend fitted on
+14 rows of shuffled y is a noise fit, and extrapolating it to the held-out row adds
+error. So mean-function results were not flattered by an inflated null; they were
+scored against a bar roughly five times too low, like everything else. In a
+20-variant sweep on phase purity, 20 of 20 "beat" −0.1480 including two
+deliberately nonsensical controls (`time_1`, `speed_1`).
+
+**Thickness is unaffected**, and the reason is on the record above: its verdict has
+always rested on the **rank permutation test** (p = 0.0056), never on R² against
+this number. That instrument was always the right one and is now the only one.
+
+**What to use instead.** The 95th percentile of the candidate's own permutation
+null, which `scripts/raw_component_screen.py --calibrate` measures, or the rank
+permutation test for a verdict. Two hazards found alongside this and now fixed:
+
+* when every fold fails to fit, a fold-mean fallback produces **exactly −0.1480
+  and ρ −1.0000** — a totally broken run reported the project's own null. The
+  screen now raises instead; any historical result at exactly −0.1480 should be
+  re-checked for collapsed folds.
+* `--seed` is inert on this code path (`fit_model_variant` runs a deterministic
+  L-BFGS from a deterministic init), so "the number does not move with the seed"
+  has never been evidence for anything. The real numerical floor, probed by row
+  ordering, is ~3e-4 rather than the 0.07 previously assumed.
+
+### The same 15 recipes, made three times (2026-09-03)
+
+A sheet arrived holding **45 rows that are 15 recipes made three times** —
+`local_inputs/Extended Summary Table C1C2.xlsx`, gitignored. Samples 1–15, 16–30
+and 31–45 carry identical inputs recipe for recipe, and block 1 is bit-identical
+to `Final Summary Table` on thickness. It is the first dataset in this project
+that can separate *the recipe moved the score* from *making and measuring the film
+again moved the score*. Reproduce with:
+
+```
+python scripts/plot_extended_replicates.py \
+    --workbook "local_inputs/Extended Summary Table C1C2.xlsx" \
+    --config configs/campaign_d2d_perovskite_extended_c1c2.yaml \
+    --outdir local_inputs/extended_c1c2_reports --align-blocks-to-first
+```
+
+That config is `status: diagnostic` and **is not a campaign contract**: it reads
+all three scores as stored, including thickness, and its optoelectronic anchors
+are derived from this data, which a real contract must never do.
+
+**Leave-one-out on this sheet leaks and the leak is large.** Hold out one row and
+the recipe's other two repeats remain in training at identical inputs, so the GP
+interpolates its own repeat. The row-wise LOO prediction correlates **+0.9989**
+with "just average the other two repeats", and that naive baseline alone scores
++0.5711 against the GP's +0.5849. Leave-one-**recipe**-out drops all three.
+
+| objective (score as stored) | row-wise LOO | leave-one-recipe-out | recipe ICC | block share |
+|---|---:|---:|---:|---:|
+| uniformity | +0.5849 | **−0.2431** | **0.730** | 1.3% |
+| optoelectronic | collapsed 45/45 | collapsed 15/15 | **0.000** | **84.5%** |
+| thickness score | +0.7556 | **−0.2151** | 0.845 | 0.5% |
+
+Nulls: −0.0460 row-wise, −0.1480 recipe-wise. They differ because dropping 3 rows
+of 45 moves the training mean further than dropping 1.
+
+**Three findings, and only the third is a modelling matter.**
+
+1. **Optoelectronic is a drift artefact.** All 15 recipes fall monotonically
+   block 1 → 2 → 3 (chance: 2.5 of 15), block 1 sitting ~120× above block 2. The
+   signal-collapse guard fires in every fold: the GP explains the column as pure
+   noise and its posterior mean is constant. This is metrology, not modelling.
+   The formula has also moved again — `AK` is now `=R2*X2*AA2`, a raw triple
+   product spanning 6.1e-11 to 6.2e-6, unnormalised. The v4 contract still
+   fingerprints the older `=(S2+((0.75*Y2)+(0.25*AB2)))/2`, so intake reports it.
+2. **Uniformity is reproducible.** ICC 0.730, F 9.10, p < 0.00001; recipe spread
+   0.080 against repeat spread 0.049. Earlier contracts recorded it as possibly
+   measurement-noise-limited; **that reading is now contradicted.** It is a real,
+   repeatable property of the recipe that ten inputs at fifteen distinct recipes
+   are too sparse to pin down. It responds to more distinct recipes and to
+   structure, not to a different acquisition.
+3. **Squashing a measurement before the GP destroys the signal.** Same films, same
+   folds, leave-one-recipe-out:
+
+   | thickness as… | R² | ρ |
+   |---|---:|---:|
+   | the stored score (Gaussian-squashed) | −0.2151 | −0.106 |
+   | raw nanometres | **+0.4082** | +0.627 |
+   | log(nm) | **+0.4266** | +0.624 |
+
+   `EXP(-((T-650)/250)²)` is non-monotone, so 500 nm and 800 nm map to the same
+   score and the GP is asked to learn a fold. **This is why v4 trains thickness on
+   nanometres and applies the target afterwards** — and it is the strongest
+   available argument for eventually unfreezing uniformity and optoelectronic and
+   modelling their components rather than their composites.
+
+**Caveats on this sheet.** Only samples 1–15 carry raw component data; 16–45 hold
+`AH`/`AI`/`AJ`/`AK`/`AL` as pasted literals with nothing underneath, so no
+component-level analysis is possible on blocks 2 and 3 and nothing can cross-check
+those values against measurements. Samples 17 and 32 still read
+`speed_2 = 0, time_2 = 60`; the group's correction to sample 2 reached block 1
+only. The script reports that mismatch and, with `--align-blocks-to-first`,
+applies the same correction to the later blocks.
 
 ## The v3 DRY RUN, from 2026-08-17 (superseded)
 
@@ -204,9 +396,34 @@ That two-part rule is now what the intake prints: (i) the structured fit must be
 the null by more than the floor; (ii) when structured-versus-plain lands inside the
 floor, the permutation decides.
 
-### Are beta = 36 and radius = 0.35 defensible?
+### Are beta = 4.0 and radius = 0.25 defensible?
 
-**The live campaign runs beta = 36 and radius = 0.35.** They were determined by a
+**The live campaign runs beta = 4.0 and radius = 0.25** as of 2026-09-03. What
+follows describes the sweep that produced the earlier 36 / 0.35 cell and then the
+measurement that moved it; the sweep's central caveat — that it cannot *rank*
+cells — applies to both settings equally.
+
+**What moved it.** At β = 36 the radius knob is provably inert: on the final
+workbook at seed 73 the scan returns bit-identical batches at radius 0.15, 0.25
+and 0.35 (spacing 1.213, 18 of 50 coordinates pinned to a grid bound, identical
+mean utilities). At β = 4 it binds, and the batch stops living on the corners:
+
+| beta | radius | HV gain | edge coords / 50 | spacing | sd ratio |
+|---:|---:|---:|---:|---:|---:|
+| 4 | 0.15 | +0.0000 | 13 | 0.682 | 5.9× |
+| **4** | **0.25** | **+0.0009** | **11** | **0.781** | **5.8×** |
+| 4 | 0.35 | +0.0000 | 13 | 0.941 | 6.1× |
+| 9 | 0.25 | +0.0000 | 15 | 0.882 | 6.2× |
+| 36 | 0.25 | +0.0000 | 18 | 1.213 | 6.5× |
+
+`sd ratio` is the mean posterior sd at the proposed points over that at the
+measured ones. **Read the edge count and the spacing, not the HV gain**: +0.0009
+is far below the 0.010–0.027 trial sd this sweep measured, so it is a tiebreak.
+The edge count and spacing are facts about the batch at a fixed seed.
+
+#### The sweep that produced the earlier cell
+
+They were determined by a
 sweep over two instruments on the campaign's own data — per-round utility **box
 plots**, and **heat maps**, which are 2-D slices through the higher-dimensional
 Gaussian-process model — across **beta from 9 to 49** (9, 25, 36, 49) and **radius
@@ -224,36 +441,36 @@ GP oracle of the same model class the optimiser fits*, so the landscape held no
 surprises and exploration had unusually little to earn — it **systematically
 undervalues large β**, which is the very thing this cell buys.
 
-The rationale is a posture, not a score: β = 36 means κ = √36 = 6, heavy
-exploration, which is the right stance when **two of three objectives carry no
-learnable signal** and the third is the only one worth exploiting.
+The rationale for β = 36 was a posture, not a score: κ = √36 = 6, heavy
+exploration, which reads as the right stance when **two of three objectives carry
+no learnable signal** and the third is the only one worth exploiting. **Both
+consequences it was known to carry are what eventually retired it:**
 
-**Two consequences are on record, both measured on the live R1 proposal.**
-
-* **Local penalization is inert at this β.** Achieved minimum batch spacing is
-  **1.091**, three times the 0.35 radius, so the knob has nothing to act on. The
+* **Local penalization was inert at that β.** Achieved minimum batch spacing was
+  **1.091**, three times the 0.35 radius, so the knob had nothing to act on. The
   sweep predicted this: radius binds *less* as β rises, and at β = 49 the nine
   radii produced only 3–4 distinct batches.
-* **The batch runs to the edges.** Range-edge coordinates per condition are
+* **The batch ran to the edges.** Range-edge coordinates per condition were
   **[4, 7, 4, 3, 3]** — 21 of 50 — against 11–15 of 80 on the first campaign's
   arm at β = 4. High exploration plus a monotone thickness trend puts candidates
-  at bounds. That is expected, not a defect, but it is what a reviewer should
-  check before fabricating.
+  at bounds.
 
-**Two triggers to revisit.** First, when the photoconductance normalisation is
-fixed (issue 10) and optoelectronic may become learnable — the posture was chosen
-for two dead axes and would no longer be justified by the same argument. Second,
-when R1 measurements land and the oracle can be replaced by real film-to-film
-noise, at which point the sweep's central caveat stops applying and a genuine
-ranking becomes possible.
+**The first revisit trigger fired twice.** Once when the photoconductance
+normalisation was fixed (issue 10) — that time the posture survived, because
+optoelectronic still did not beat the null. Again on 2026-09-03, when the extended
+C1&C2 sheet showed the two dead axes are dead for reasons no β addresses; that
+time it did not survive. **The second trigger — R1 measurements replacing the
+oracle — has still not fired**, and until it does the sweep's central caveat
+stands: no cell here has been *ranked*, only argued for.
 
 ### The simulation at the ratified cell
 
-`scripts/plot_round_simulation.py --cell 0.35,36` runs one campaign against the
+`scripts/plot_round_simulation.py --cell 0.25,4` runs one campaign against the
 frozen oracle at exactly the decided knobs; `scripts/plot_boxplot_sweep.py
---betas 36 --radii 0.35` runs the same cell across the three starting designs so
+--betas 4 --radii 0.25` runs the same cell across the three starting designs so
 the per-round boxes have a distribution behind them. Both default to the v3
-config. Outputs: `local_outputs/round_sim_v3_cell` and
+config. (The numbers reported immediately below were measured at the earlier
+0.35 / 36 cell and have not been re-run.) Outputs: `local_outputs/round_sim_v3_cell` and
 `local_outputs/boxplot_v3_cell`.
 
 Measured on the new data, seed 73:
@@ -1009,7 +1226,7 @@ than an empty one, so adding it is a two-line change.
 
 ## Are beta = 4.0 and radius = 0.25 defensible? (FIRST campaign)
 
-> Superseded for the live campaign by "Are beta = 36 and radius = 0.35
+> Superseded for the live campaign by "Are beta = 4.0 and radius = 0.25
 > defensible?" near the top of this document. Kept as the record of how the first
 > campaign's defaults were checked.
 
