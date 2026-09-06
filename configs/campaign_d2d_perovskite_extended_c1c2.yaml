@@ -1,0 +1,167 @@
+# DIAGNOSTIC ONLY. Not a campaign contract, and nothing here proposes films.
+#
+# The workbook is local_inputs/Extended Summary Table C1C2.xlsx (gitignored),
+# supplied 2026-09-03 as "summary table with extended dataset from Campaign 1 & 2".
+# It holds 45 rows, and the 45 rows are 15 RECIPES MEASURED THREE TIMES: samples
+# 1-15, 16-30 and 31-45 carry identical inputs, recipe for recipe. That makes this
+# the first dataset in the project that can separate "the recipe did it" from "the
+# measurement did it", which is the whole reason for reading it.
+#
+# WHY IT IS NOT A CONTRACT.
+#   * The optoelectronic definition MOVED. AK is now `=R2*X2*AA2`, a raw product
+#     of clamped Voc (V) x floor-corrected photoconductance (S) x capped
+#     photosensitivity -- not the normalised mean the v4 contract fingerprints.
+#     Its values span 6.1e-11 to 6.2e-6, five orders of magnitude, and are not in
+#     [0, 1]. The v4 anchors would map every film to utility 0.
+#   * Samples 17 and 32 are `speed_2 = 0, time_2 = 60`, which breaks
+#     second_stage_all_or_nothing. Sample 2 is the same recipe with the group's
+#     correction (time_2 = 0) applied. The correction reached one of the three
+#     replicates, not all three.
+#   * The scores are used AS STORED, all three of them, per the request. That
+#     includes thickness, which every real contract trains on in nanometres.
+#
+# Read the intake report before quoting any number out of this file.
+campaign:
+  name: D2D_FA0.9Cs0.1PbI3_extended_c1c2_diagnostic
+  status: diagnostic
+  schema_version: d2d-campaign-v4
+  workbook_profile: d2d_summary_final_v4
+  source_sheet: R0
+
+# UNCHANGED from v4. All 45 rows land on these grids.
+inputs:
+  - {name: speed_1,     unit: rpm, start: 1000, stop: 6000, step: 500}
+  - {name: time_1,      unit: s,   start: 5,    stop: 50,   step: 5}
+  - {name: speed_2,     unit: rpm, start: 0,    stop: 5000, step: 500}
+  - {name: time_2,      unit: s,   start: 0,    stop: 60,   step: 5}
+  - {name: precur_conc, unit: M,   start: 1.00, stop: 2.00, step: 0.05}
+  - {name: precur_vol,  unit: uL,  start: 40,   stop: 200,  step: 10}
+  - {name: anneal_temp, unit: C,   start: 100,  stop: 185,  step: 5}
+  - {name: anneal_time, unit: min, start: 10,   stop: 60,   step: 5}
+  - {name: anti_vol,    unit: uL,  start: 100,  stop: 200,  step: 5}
+  - {name: anti_time,   unit: s,   start: 9,    stop: 25,   step: 1}
+
+objectives:
+  contract_version: d2d-objectives-v5-extended-diagnostic
+  scaling_mode: fixed_affine
+  specs:
+  - name: uniformity
+    model_source_column: "Uniformity score (Avg (Coverage + (1-Uniformity) + Phase purity))"
+    transform: affine
+    goal: maximize
+    measurement:
+      recipe: stored
+      inputs:
+        - {column: "Uniformity score (Avg (Coverage + (1-Uniformity) + Phase purity))"}
+      formula_fingerprint:
+        column: "Uniformity score (Avg (Coverage + (1-Uniformity) + Phase purity))"
+        formula: "=(L2+O2+P2)/3"
+    lower_anchor: 0.0
+    upper_anchor: 1.0
+    signal_status: exploration_only
+
+  - name: optoelectronic
+    model_source_column: "Optoelectronic score (Normalized (Voc + (0.75*Photoconductance + 0.25*Photosensitivity))/2"
+    transform: affine
+    goal: maximize
+    measurement:
+      recipe: stored
+      inputs:
+        - {column: "Optoelectronic score (Normalized (Voc + (0.75*Photoconductance + 0.25*Photosensitivity))/2"}
+      # DELIBERATELY the NEW formula. Fingerprinting the v4 one here would make
+      # every run of this diagnostic shout about a change the group already made.
+      # The v4 config still fingerprints `=(S2+((0.75*Y2)+(0.25*AB2)))/2`, so the
+      # change stays audible where it matters -- on the campaign contract.
+      formula_fingerprint:
+        column: "Optoelectronic score (Normalized (Voc + (0.75*Photoconductance + 0.25*Photosensitivity))/2"
+        formula: "=R2*X2*AA2"
+      agreement_check:
+        raw: "Photoconductance (Max - based on raw slopes)"
+        normalized: "Normalized photoconductance (test)"
+        min_spearman: 0.0
+    # NOT [0, 1]. A raw triple product is not a normalised score, and anchoring it
+    # at [0, 1] would put all 45 films on top of each other at utility ~1e-6.
+    # These anchors bracket the observed span (6.06e-11 .. 6.22e-06) and are
+    # declared, not derived per round -- but they are declared FROM THIS DATA,
+    # which is exactly what a campaign contract must never do. Diagnostic only.
+    lower_anchor: 0.0
+    upper_anchor: 7.0e-06
+    signal_status: exploration_only
+
+  - name: thickness
+    # AS STORED, per the request: this is AL = AI = EXP(-(((AH-650)/250)^2)), the
+    # workbook's normalised thickness, NOT the nanometres every contract trains
+    # on. The Gaussian target is therefore already applied before the GP sees it,
+    # which folds a hard non-monotone transform into the response.
+    model_source_column: "Thickness score (normalized of avg)"
+    transform: affine
+    goal: maximize
+    measurement:
+      recipe: stored
+      inputs:
+        - {column: "Thickness score (normalized of avg)"}
+      formula_fingerprint:
+        column: "Thickness score (normalized of avg)"
+        formula: "=AI2"
+    lower_anchor: 0.0
+    upper_anchor: 1.0
+    signal_status: learnable
+
+reference_point_utility: [-0.01, -0.01, -0.01]
+
+rounds:
+  r1:
+    method: ucb_hvi
+    batch_size: 5
+    replicates_per_condition: 3
+    beta: 36.0
+    candidate_pool_size: 32768
+    posterior_samples: 256
+    moment_method: monte_carlo
+  r2:
+    method: qlognehvi
+    batch_size: 3
+    replicates_per_condition: 3
+    candidate_pool_size: 32768
+    mc_samples: 128
+    sequential_pending: true
+
+# Kept so the samples 17 / 32 violation is REPORTED rather than absorbed.
+constraints:
+  - zero_coupled: [speed_2, time_2]
+    name: second_stage_all_or_nothing
+  - sum_upper_strict: {lhs: anti_time, rhs: [time_1, time_2]}
+    name: antisolvent_lands_while_spinning
+  - nonzero_minimum: {column: time_2, minimum: 10}
+    name: second_stage_runs_at_least_10s
+
+review:
+  probes: []
+  notes:
+    - >
+      45 rows, 15 recipes, three replicates each. Ordinary leave-one-out on this
+      sheet LEAKS: hold out row 4 and rows 19 and 34 carry the same inputs, so the
+      GP interpolates its own replicate and the R2 measures reproducibility rather
+      than prediction. Leave-one-RECIPE-out (all three rows together) is the
+      honest test. Both are reported; do not quote the row-wise one alone.
+
+local_penalization:
+  distance_metric: normalized_euclidean
+  dimension_weights: null
+  radius: 0.35
+  min_batch_distance: 0.15
+  min_observed_distance: 0.0
+
+model:
+  variant: dim_scaled_prior
+  observation_noise: fit_from_marginal_likelihood
+  replicate_variance:
+    sanity_floor:
+      thickness: 0.003007
+    rows_without_replicates: 1
+
+reproducibility:
+  seed: 73
+  record_git_commit: true
+  record_environment_versions: true
+  record_resolved_config_hash: true

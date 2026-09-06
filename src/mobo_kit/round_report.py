@@ -200,10 +200,17 @@ def _style(ax: plt.Axes) -> None:
 
 
 def _wrapped_caveats(fig: plt.Figure, caveats: Sequence[str]) -> list[str]:
-    """Hard-wrap to the figure width; matplotlib's own ``wrap=True`` is unreliable."""
+    """Hard-wrap to the figure width; matplotlib's own ``wrap=True`` is unreliable.
+
+    The footer is 7.2 pt monospace, so a character is about 0.06 in and an inch
+    holds ~16.5 of them. The estimate used to be 17 per inch with no right margin,
+    which overflowed the canvas on a three-panel figure: the last words of a long
+    caveat rendered past the edge and were cropped by ``savefig``. Nothing warns
+    when that happens -- the text is simply not in the PNG.
+    """
     import textwrap
 
-    columns = max(60, int(fig.get_size_inches()[0] * 17))
+    columns = max(60, int((fig.get_size_inches()[0] - 0.25) * 16))
     lines: list[str] = []
     for caveat in caveats:
         wrapped = textwrap.wrap(caveat, width=columns) or [""]
