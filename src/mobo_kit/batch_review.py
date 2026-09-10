@@ -309,8 +309,16 @@ def build_batch_review(
     seed: int | None = None,
     findings: Sequence[ScoreFinding] = (),
     context: Mapping[str, Any] | None = None,
+    observed_Yvar: np.ndarray | None = None,
 ) -> BatchReview:
-    """Assemble the review of ``conditions`` against the model that proposed them."""
+    """Assemble the review of ``conditions`` against the model that proposed them.
+
+    ``observed_Yvar`` must be whatever the round's runner was given. Under
+    ``replicate_pooled`` the proposing GPs carry the measured replicate noise; a
+    review refitted without it fits its own noise and describes a different model
+    from the one that chose the batch -- on the first R2 that put the uniformity
+    utilities up to 0.027 high, on a sheet that said the noise was measured.
+    """
     design = build_design_from_config(dict(config))
     input_names = list(design.names)
     names = list(objective_names(config))
@@ -332,7 +340,7 @@ def build_batch_review(
             )
 
     model, model_warnings = fit_campaign_models(
-        config, observed, observed_Y_raw, seed=resolved_seed
+        config, observed, observed_Y_raw, seed=resolved_seed, Yvar=observed_Yvar
     )
 
     utility_mean, utility_sd = _utility_moments(

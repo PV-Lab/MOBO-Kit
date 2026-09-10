@@ -738,10 +738,10 @@ def plot_shap(
     use ``scripts/plot_shap_attribution.py`` instead, which differs in three ways
     that change what the bars mean:
 
-    * **It explains the raw model output, not utility.** For a log-link objective
-      that is ``log(nm)``, so the campaign's 650 nm Gaussian target is never
-      applied and features are ranked by their effect on log thickness rather than
-      on how good the film is. The campaign script explains
+    * **It explains the raw model output, not utility.** For thickness that is
+      nanometres in v4 (``log(nm)`` under a log-link prior), so the campaign's
+      650 nm Gaussian target is never applied and features are ranked by their
+      effect on thickness rather than on how good the film is. The campaign script explains
       ``E[utility]`` through ``ObjectiveTransform.expected_transform``.
     * **``nsamples=300`` is below the 1024 coalitions that ten inputs need**, so
       these values are a sampled approximation, and an unseeded one. At ten

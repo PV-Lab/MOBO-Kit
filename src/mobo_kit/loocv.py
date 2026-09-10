@@ -152,12 +152,19 @@ def loo_predictions(
     *,
     seed: int = 73,
     use_mean_function: bool = True,
+    y_var: np.ndarray | None = None,
 ) -> LooResult:
     """Exact leave-one-out for one objective under the campaign's own contract.
 
     ``y`` is in MEASUREMENT space, as :func:`workbook_io.read_campaign_workbook`
     returns it.  Set ``use_mean_function=False`` for the plain-GP comparison the
     intake verdict rests on.
+
+    ``y_var`` is the measured observation variance per row, as a round under
+    ``replicate_pooled`` hands it to the model; each fold keeps the variances of
+    the rows it keeps.  Rows must be RECIPES (condition means), never single
+    replicate films: holding out one of three films leaves its two siblings at the
+    same inputs in the training set and flatters the score.
     """
     from .campaign import normalise_inputs
     from scipy.stats import spearmanr
@@ -175,6 +182,14 @@ def loo_predictions(
     uppers = np.array([float(item["stop"]) for item in config["inputs"]])
     X_norm = normalise_inputs(config, X_phys)
 
+    variances = None
+    if y_var is not None:
+        variances = np.asarray(y_var, dtype=float).reshape(-1)
+        if variances.shape != y.shape:
+            raise ValueError(
+                f"y_var has {variances.size} rows for {n} observations; it must be "
+                "one measured variance per row of y."
+            )
     mu = np.empty(n)
     var = np.empty(n)
     collapse: list[str] = []
@@ -198,6 +213,13 @@ def loo_predictions(
                     variant=DIM_SCALED_PRIOR,
                     seed=seed,
                     mean_module=module,
+                    train_Yvar=(
+                        None
+                        if variances is None
+                        else torch.tensor(
+                            variances[keep], dtype=torch.double
+                        ).unsqueeze(-1)
+                    ),
                 )
             collapse.extend(
                 w.message for w in record.warnings if w.stage == SIGNAL_COLLAPSE_STAGE

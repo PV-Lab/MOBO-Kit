@@ -216,8 +216,9 @@ def gather_observations(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, list[str]]:
     """Every measured design point the next round should learn from.
 
-    R1 trains on Sheet1 alone.  R2 trains on Sheet1 plus the aggregated R1
-    conditions -- three films become one observation, which is why
+    R1 trains on the source sheet (``R0`` in v4) alone.  R2 trains on the source
+    sheet plus the aggregated R1 conditions -- three films become one observation,
+    which is why
     :func:`read_candidate_results` exists.
 
     Returns ``(X, Y, Yvar, provenance)``.  ``Yvar`` is ``None`` unless the config
@@ -234,7 +235,7 @@ def gather_observations(
     contents = read_campaign_workbook(path, config)
     if contents.errors:
         raise LauncherError(
-            "Sheet1 has rows that cannot be turned into objective values:\n"
+            f"{source_sheet(config)} has rows that cannot be turned into objective values:\n"
             + describe_findings(contents.errors)
         )
     X = [contents.inputs.to_numpy(dtype=float)]
@@ -424,6 +425,7 @@ def generate_next_round(
         round_name=round_name,
         seed=result.diagnostics.get("seed"),
         findings=contents.findings,
+        observed_Yvar=Yvar,
         context={
             "Round": round_name,
             "Worklist": sheet_path.name,
@@ -454,6 +456,7 @@ def generate_next_round(
                 when=stamp,
                 seed=result.diagnostics.get("seed"),
                 progress=progress,
+                observations=(X, Y, Yvar),
             )
         except Exception as exc:  # noqa: BLE001 - a figure must never cost a batch
             report_error = (

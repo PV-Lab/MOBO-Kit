@@ -103,6 +103,7 @@ def main(argv: list[str] | None = None) -> int:
 
     proposal = None
     review = None
+    observations = None
     if not args.data_only:
         status = inspect_campaign(workbook, config)
         if not status.can_generate:
@@ -125,7 +126,9 @@ def main(argv: list[str] | None = None) -> int:
                 round_name=round_name,
                 seed=proposal.diagnostics.get("seed"),
                 findings=contents.findings,
+                observed_Yvar=Yvar,
             )
+            observations = (X, Y, Yvar)
             drift = _worklist_drift(workbook, config, round_name, proposal)
             print(f"  worklist check: {drift}")
 
@@ -138,6 +141,7 @@ def main(argv: list[str] | None = None) -> int:
         seed=args.seed,
         shap_max_instances=args.shap_instances,
         progress=lambda message: print(f"  {message}", flush=True),
+        observations=observations,
     )
     print()
     print(manifest.summary())

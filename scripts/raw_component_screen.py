@@ -216,8 +216,9 @@ def _mean_spec(item: Mapping[str, Any], response: str) -> StructuredMeanSpec | N
     A feature may be a bare column name (identity transform) or
     ``{"column": ..., "transform": "log"}`` -- the campaign config's own shape.
     Without the second form this screen COULD NOT EXPRESS the mean function the
-    live campaign actually runs, ``log(speed_1) + log(precur_conc)`` on a log
-    response, so every "beats the incumbent" comparison it made was against a
+    live campaign ran until its withdrawal on 2026-09-06, ``log(speed_1) +
+    log(precur_conc)`` on a log response, so every "beats the incumbent" comparison
+    it made was against a
     different model. Found 2026-09-04 by an adversarial verifier; the incumbent
     measures +0.7423, matching the config's own recorded +0.7422, against the
     +0.7633 the screen had been calling it.

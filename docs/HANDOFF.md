@@ -66,7 +66,7 @@ Then verify the state yourself:
 pytest -q
 ```
 
-Expect **630 passed, 0 failed, 30 warnings** (measured 2026-09-10; about 6.5 min
+Expect **638 passed, 0 failed, 30 warnings** (measured 2026-09-10; about 4 min
 with other work sharing the machine, so re-time on an idle one before quoting a
 duration). Nothing in the suite needs a private workbook; the tests that would use
 one skip when it is absent.
@@ -171,14 +171,32 @@ prior that earns its place; the live config declares none, and a test pins that.
    run in triplicate; the results came back on 2026-09-10. The filled worklist
    sits beside the workbook as `<workbook>_R1_Candidates.xlsx`, and the launcher
    proposes R2 from the R0 rows plus the five R1 condition means.
-2. **Option C for R2's model** (chosen 2026-09-06): the GP gets each R1
-   condition's mean plus the between-film variance measured from its triplicates
-   — `model.observation_noise: replicate_pooled` — rather than the 15 raw rows,
-   which carry the same information. `replicate_pooled` pools ONE variance per
-   objective across conditions (a per-condition variance would rest on 2 dof);
-   each row then gets that variance divided by its film count, so each R0 row, a
-   single film, gets it whole.
-3. **`anneal_temp` sits at a range edge in proposed conditions.** If the group
+2. **Option C is on for R2** (chosen 2026-09-06, switched on 2026-09-10): the GP
+   gets each R1 condition's mean plus the between-film variance measured from its
+   triplicates — `model.observation_noise: replicate_pooled` — rather than the 15
+   raw rows, which carry the same information. It pools ONE variance per objective
+   across conditions (a per-condition variance would rest on 2 dof); each row gets
+   it divided by its film count, so each R0 row, a single film, gets it whole.
+   **Switching it on was not one key.** A pre-R2 audit found four things wrong:
+   thickness still averaged its replicates in log space, a leftover from the
+   withdrawn prior, so the model — which trains on nanometres — would have been
+   told its thickness noise was a fraction of a nanometre instead of the measured
+   26 nm; the noise floor compared a single reading with a film average and raised
+   a false alarm; and the Review sheet and the round report each refitted their own
+   model without the measured noise, the report on R0 alone. All four are fixed,
+   and `replicate_aggregates` plus a post-fit check now refuse a variance in the
+   wrong units. None of it changes which conditions R2 proposes; it changes what
+   the Review sheet and the figures say about them.
+3. **Left open from that audit (medium, none affects the batch).** The R1 sheet's
+   own notes — five readings set aside in `T anom` — do not reach the R2 Review
+   sheet, which lists R0's notes only. A floor warning, when one fires, lands only
+   in the Review's "Trained on" cell rather than above the numbers. The data-only
+   report ("Figures from current data") still fits the source sheet alone. From the
+   review of the fix itself (all low): the attribution figure explains the first 15
+   observations, which for R2 are the R0 rows only; `_observations_by_round`
+   swallows any error reading a round sheet, the new rule/link refusal included;
+   and no test yet drives `generate_round_report(observations=...)`.
+4. **`anneal_temp` sits at a range edge in proposed conditions.** If the group
    would never anneal below some temperature, that belongs in `constraints:` —
    now a live list with three entries, so adding one is a two-line change.
 
@@ -220,11 +238,13 @@ inside a floor twice before adopting that rule.
   2026-09-06 after its physics justification failed. Bringing one back is a
   design decision for the group, and it needs a permutation test of its own.
 - **`ObjectiveTransform.transform` takes MODEL-space values, not measurements.**
-  It decodes the link itself, so handing it thickness in nanometres exponentiates
-  a value that was never a logarithm. Use `transform.transform_measurements` at
-  any call site holding workbook values. This defect has now arrived by three
-  separate routes; the third was caught in a draft of the permutation script only
-  because saturating the Gaussian to 0.0 made a column constant.
+  It decodes each objective's link itself. v4 has no log link, so today the two
+  agree for thickness, but keep calling `transform.transform_measurements` at any
+  call site holding workbook values: under a log link (v2, v3, or any future
+  log-response prior) handing `transform` nanometres exponentiates a value that
+  was never a logarithm. This defect arrived by three separate routes; the third
+  was caught in a draft of the permutation script only because saturating the
+  Gaussian to 0.0 made a column constant.
 - **Uniformity has no learnable signal** on either campaign's data — the first by
   permutation (p = 0.82 on *that* score), the second by leave-one-out (−0.6447).
   Exploration-only by measurement, not by choice.
@@ -255,8 +275,12 @@ filtered. If you add a number that steers a decision, add its comparator with it
 - **BoTorch silently ignores `train_Yvar` when a `likelihood` is also passed.**
   Verified on 0.15.1. Pass one or the other, never both.
 - **`Standardize` rescales `train_Yvar` along with the targets**, so measured
-  variance must arrive in the target's own units — and in the *model's* space,
-  which for thickness is `log T`, not nanometres.
+  variance must arrive in the target's own units — and in the *model's* space.
+  Since the prior was withdrawn (2026-09-06) thickness trains on nanometres, so
+  its variance is nm² (pooled between-film ≈ 663 nm², sd ≈ 26 nm). A variance of
+  `log T` read as nm² is floored by gpytorch at a noise nobody measured, with only
+  a filtered library warning to show for it; `replicate_aggregates` now refuses
+  that mismatch and every round checks the noise its model actually holds.
 - **`tight_layout` does not support 3-D axes or colorbars** and warns that its
   result may be wrong. `round_report._save` takes `tight=False` for those figures
   rather than ignoring the warning.

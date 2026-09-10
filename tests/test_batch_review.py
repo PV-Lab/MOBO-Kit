@@ -565,6 +565,45 @@ def test_a_healthy_fit_carries_no_warning(review) -> None:
     assert "READ THIS BEFORE THE NUMBERS" not in review.to_text()
 
 
+def test_the_review_uses_the_measured_noise_the_round_was_given(config) -> None:
+    """Under replicate_pooled the proposing GPs carry measured noise. A review that
+    refits without it describes a different model from the one that chose the
+    batch -- on the first R2 the uniformity utilities came out up to 0.027 high. So
+    the review takes the same variance, and with it reproduces the round's model."""
+    from mobo_kit.batch_review import _physical_predictions
+    from mobo_kit.campaign import build_objective_transform, fit_campaign_models
+
+    X, Y = _observations(config)
+    names = [i["name"] for i in config["inputs"]]
+    conditions = pd.DataFrame(_rows(config, 2, seed=42), columns=names)
+    # a measured variance in each objective's MODEL space: log for a log link
+    links = [spec.model_link for spec in build_objective_transform(config).specs]
+    target = np.column_stack(
+        [np.log(Y[:, i]) if link == "log" else Y[:, i] for i, link in enumerate(links)]
+    )
+    Yvar = np.tile(0.05 * target.var(axis=0), (len(Y), 1))
+
+    measured = build_batch_review(
+        config, X, Y, conditions, round_name="R2", observed_Yvar=Yvar
+    )
+    fitted = build_batch_review(config, X, Y, conditions, round_name="R2")
+    model, _ = fit_campaign_models(config, X, Y, Yvar=Yvar)
+    expected = _physical_predictions(config, model, conditions[names].to_numpy(float))
+
+    for objective, values in expected.items():
+        assert np.allclose(
+            measured.candidates[f"{objective}_predicted"].to_numpy(float), values[:, 0]
+        )
+    assert any(
+        not np.allclose(
+            measured.candidates[f"{objective}_utility"].to_numpy(float),
+            fitted.candidates[f"{objective}_utility"].to_numpy(float),
+            rtol=1e-6,
+        )
+        for objective in expected
+    )
+
+
 # --------------------------------------------------------------------------- #
 # the sheet
 # --------------------------------------------------------------------------- #

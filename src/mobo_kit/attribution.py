@@ -1,7 +1,8 @@
 """Shapley attribution over the campaign's own fitted models.
 
 **What is explained is ``E[utility]``, not the posterior mean.**  For thickness the
-posterior is lognormal and the utility is a peaked Gaussian on a 650 nm target, so
+posterior is Gaussian in nanometres (lognormal under a log-link prior, as in the
+archived contracts) and the utility is a peaked Gaussian on a 650 nm target, so
 transforming the mean is biased by Jensen's inequality and blind to the variance
 that a target-seeking utility depends on.  ``expected_transform`` is the correct
 route and is what the acquisition consumes.

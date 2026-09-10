@@ -115,6 +115,44 @@ def test_no_objective_declares_a_mean_function(config) -> None:
     )
 
 
+def test_measured_replicate_noise_is_on_and_in_the_model_s_units(config) -> None:
+    """Option C, switched on 2026-09-10 when the R1 triplicates came back. It is
+    three settings, not one: the noise mode; a replicate rule that matches every
+    objective's model space (thickness trains in nm, so `mean`); and a floor in
+    the same units as the variance it guards, the within-film variance of a film
+    MEAN in nm^2. Getting the second wrong handed the model a log-space variance
+    as nm^2; getting the third wrong fired a false alarm on the first real data."""
+    from mobo_kit.campaign import replicate_aggregates
+    from mobo_kit.replicate_variance import REPLICATE_POOLED, variance_config
+
+    assert config["model"]["observation_noise"] == REPLICATE_POOLED
+    rules = dict(zip(objective_names(config), replicate_aggregates(config)))
+    assert rules == {"uniformity": "mean", "optoelectronic": "mean", "thickness": "mean"}
+    assert variance_config(config)["sanity_floor"]["thickness"] == pytest.approx(91.2)
+
+
+def test_r2_observations_carry_nanometre_noise_and_no_floor_alarm(config) -> None:
+    """On the real triplicates: 20 observations, thickness noise in nm^2 (a single
+    R0 film takes the pooled 662.7, an R1 mean of three a third of it), and no
+    floor warning -- the false alarm the old per-reading log floor raised here."""
+    from pathlib import Path
+
+    from mobo_kit.launcher import gather_observations
+
+    source = Path(SOURCE)
+    r1 = source.with_name(f"{source.stem}_R1_Candidates.xlsx")
+    if not (source.exists() and r1.exists()):
+        pytest.skip("needs the private R0 workbook and its filled R1 worklist")
+
+    X, Y, Yvar, provenance = gather_observations(source, config, for_round="R2")
+    assert X.shape == (20, 10)
+    assert Yvar.shape == (20, 3)
+    column = list(objective_names(config)).index("thickness")
+    assert Yvar[0, column] == pytest.approx(662.7, abs=0.1)
+    assert Yvar[-1, column] == pytest.approx(662.7 / 3, abs=0.1)
+    assert not any(item.startswith("WARNING") for item in provenance)
+
+
 def test_the_launcher_defaults_to_the_live_contract() -> None:
     """The one path an experimentalist reaches by double-clicking. Archiving a
     config without moving this is how a user once got a missing-column error on

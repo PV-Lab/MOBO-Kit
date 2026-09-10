@@ -514,10 +514,11 @@ class CandidateResults:
 def _aggregate(values: np.ndarray, rule: str) -> tuple[float, float]:
     """Collapse one condition's film values to (observation, spread).
 
-    Spread is the sample sd in the aggregation space, so for ``mean_of_log`` it
-    is a sd of ``log`` values and is already what a log-space ``train_Yvar``
-    wants.  It is NaN for a single film, which is honest: one film measures no
-    reproducibility at all.
+    Spread is the sample sd in the aggregation space: for ``mean`` a sd in the
+    objective's own units, for ``mean_of_log`` a sd of ``log`` values.  Either is
+    what ``train_Yvar`` wants only when it matches the space the GP trains in,
+    which :func:`campaign.replicate_aggregates` enforces.  It is NaN for a single
+    film, which is honest: one film measures no reproducibility at all.
     """
     finite = values[np.isfinite(values)]
     if finite.size == 0:

@@ -148,7 +148,8 @@ def test_r2_trains_on_sheet1_plus_the_aggregated_r1_conditions(
     assert X.shape == (20, 10)
     assert Y.shape == (20, 3)
     assert "5 conditions from 15 films" in provenance[1]
-    # the live config still fits the noise; measured variance is one key away
+    # this module loads the ARCHIVED v2 config, which fits its noise, so no Yvar;
+    # the live contract's measured noise is pinned in test_final_campaign.py
     assert Yvar is None
 
 

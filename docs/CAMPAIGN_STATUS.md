@@ -69,6 +69,67 @@ The workbook names its sheets by round, so the source sheet became a config key,
 unchanged: each round's worklist is written to a NEW file beside the workbook and
 filled in there, and the source workbook is never opened for writing.
 
+### R1 came back (2026-09-10)
+
+R1 was proposed at seed 73 on 2026-09-07 (hash `addc7edcabb0ac02`) and made in
+triplicate: 5 recipes × 3 films. The worklist came back with every entry filled and
+every recipe exactly as proposed.
+
+**What the films measured**, R0's 15 films against R1's 15 (Mann–Whitney p):
+
+| | R0 median | R1 median | p |
+|---|---:|---:|---:|
+| uniformity score | 0.788 | 0.775 | 0.62 |
+| optoelectronic score | 0.552 | 0.557 | 0.87 |
+| thickness (nm) | 651 | 473 | 0.05 |
+| thickness score | 0.633 | 0.605 | 0.74 |
+
+No round-on-round improvement, which is what an exploring first round at beta = 4
+is expected to give. One recipe, R1_C03, landed on target (686 nm; thickness score
+0.91–1.00 across its three films). Three came in thin, 390–470 nm.
+
+**Reproducibility within one session, measured for the first time** (one-way ANOVA
+on the 5 × 3 films; thickness on log T):
+
+| | within-recipe sd | ICC | p |
+|---|---:|---:|---:|
+| uniformity | 0.044 | +0.61 | 0.012 |
+| optoelectronic | 0.029 | +0.36 | 0.095 |
+| thickness | 4.3% | +0.98 | <0.0001 |
+
+Optoelectronic, whose recipe ICC across the three C1&C2 campaigns was 0.000, is
+modestly reproducible within one session: sd 0.029 against an R0 spread of 0.081.
+That fits the reading that its trouble is drift between sessions rather than a
+meaningless measurement. Five recipes cannot settle it.
+
+**Did the model that proposed R1 predict R1?** The only prospective test available:
+
+| | rank over 5 (exact p) | inside ±2 sd | came in below prediction |
+|---|---:|---:|---:|
+| uniformity | +0.60 (0.17) | 4/5 | 5/5 |
+| optoelectronic | +0.80 (0.07) | 5/5 | 5/5 |
+| thickness | +0.60 (0.17) | 5/5 | 4/5 |
+
+The intervals were honest (14 of 15 inside ±2 sd) and the model was optimistic,
+as any acquisition that picks a model's highest-rated recipes will be. Five recipes
+cannot establish a ranking.
+
+**Leave-one-recipe-out, 15 → 20 recipes** (each R1 recipe as the mean of its films,
+with the measured noise):
+
+| | 15 recipes | 20 recipes |
+|---|---:|---:|
+| uniformity | −0.469 | +0.026 |
+| optoelectronic | −0.704 | −0.547 |
+| thickness | +0.581 | **+0.781** (rank +0.917) |
+
+Thickness keeps climbing with N, as it has every time it was measured. Uniformity
+moved from worse than guessing the average to about the same as it, which is not
+yet evidence of learning. Optoelectronic is still nothing.
+
+The three figures behind these tables are in `local_outputs/r1_results/`, which is
+not in git.
+
 ### What the final data supports
 
 `scripts/intake_new_data.py`, exact leave-one-out, null −0.1480 at N=15,
@@ -91,21 +152,20 @@ All 15 rows are on-grid, all satisfy all three constraints, and both anchors hol
 `speed_2 = 0, time_2 = 60` in an earlier draft — which breaks the first constraint
 — and the group corrected it to `time_2 = 0`.
 
-**Thickness keeps its mean function, on the rank permutation.** Intake leaves it
-*inconclusive on R²* — the +0.1608 swing sits inside the ±0.236 floor, which is a
-statement that R² cannot resolve it at N=15 rather than a verdict.
-`scripts/permutation_rank_test.py` adjudicated on 2026-09-02:
+**Thickness is learnable on the plain GP's rank permutation**, re-measured on
+2026-09-06 after the mean function was withdrawn (`scripts/permutation_rank_test.py`):
 
 | | value |
 |---|---:|
-| observed rank ρ | **+0.6500** |
-| null mean (sd) | −0.1892 (0.2944) |
+| observed rank ρ | **+0.8036** |
+| null mean (sd) | −0.1762 (0.4070) |
+| null 95th percentile | +0.5607 |
 | exceedances | **9 of 1800** |
 | p | **0.0056**, 95% CI [0.0021, 0.0090] |
 
-v3's p was 0.0028 on its own rows; that verdict did not transfer and this one was
-measured fresh. **Rank is the right statistic because rank is what the acquisition
-consumes** — it never sees R². **Do not quote the +0.1608 swing as evidence.**
+The earlier verdict (ρ +0.6500, measured with the mean function on 2026-09-02) is
+superseded. **Rank is the right statistic because rank is what the acquisition
+consumes** — it never sees R².
 
 **Issue 10 is CLOSED.** The v3 photoconductance normalisation ranked backwards
 against its own raw measurement (Spearman −0.5484, p = 0.0343). On v4 the same
@@ -465,7 +525,8 @@ normalisation was fixed (issue 10) — that time the posture survived, because
 optoelectronic still did not beat the null. Again on 2026-09-03, when the extended
 C1&C2 sheet showed the two dead axes are dead for reasons no β addresses; that
 time it did not survive. **The second trigger — R1 measurements replacing the
-oracle — has still not fired**, and until it does the sweep's central caveat
+oracle — fired on 2026-09-10**, when the R1 triplicates came back. Beta and radius
+have not yet been re-examined against them, so the sweep's central caveat still
 stands: no cell here has been *ranked*, only argued for.
 
 ### The simulation at the ratified cell
@@ -725,10 +786,11 @@ with torch.no_grad():
 
 Two things to respect when turning that into a utility surface:
 
-* the GP output for thickness is **log(nm)**, not nm. `ObjectiveSpec.model_link`
-  records this. Use `transform.expected_transform(mean, var)` rather than
-  transforming the mean yourself; it dispatches per objective and integrates the
-  lognormal by quadrature where needed.
+* the GP output for thickness is **nm** in v4; it was log(nm) while the log prior
+  was declared, and `ObjectiveSpec.model_link` records which. Use
+  `transform.expected_transform(mean, var)` rather than transforming the mean
+  yourself; it dispatches per objective, integrating a lognormal by quadrature
+  where a log link needs it and using the Gaussian closed form otherwise.
 * inputs are normalised to `[0,1]` against the config grid bounds, not the
   observed range. `normalise_inputs(config, X_phys)` is the conversion. A model
   fitted on config bounds and evaluated on observed-range coordinates is being
@@ -786,16 +848,18 @@ Objective values are computed per film with the same recipes Sheet1 uses, so R0
 and R1 observations are commensurable, and only then aggregated per
 `replicate_group`.
 
-**Thickness aggregates in log space** (`replicate_aggregate: mean_of_log`), because
-`response: log` means the GP trains on `log T` — the geometric mean is the
-arithmetic mean in the space the model works in, and it is the choice consistent
-with pooling `train_Yvar` in log space. The difference from a plain mean is second
-order in the replicate spread: under 0.1% at the ~3% spread most R0 rows show,
-about 14% on a film set as inconsistent as sample 12's. It is one config key per
-objective if the group prefers otherwise.
+**Thickness aggregates with the plain mean, in nanometres** (`replicate_aggregate:
+mean`), since 2026-09-10. It aggregated in log space (`mean_of_log`) while its mean
+function declared `response: log` and the GP trained on `log T`. The prior was
+withdrawn on 2026-09-06 and this key was not, so measured noise, switched on for
+R2, would have handed the nanometre model a variance of `log T` as nm². The rule
+must match the model's link, and `replicate_aggregates` now refuses a mismatch. The
+difference between the two means themselves is second order: at most 1 nm on the
+R1 thickness means.
 
-`replicate_spread` is what Phase 4 (issue 7) pools, and it is already in the right
-space: a sd of `log T` for thickness, a sd of the value itself for the other two.
+`replicate_spread` is what Phase 4 (issue 7) pools, in each objective's
+aggregation space, which the guard keeps equal to the model's space: a sd in nm for
+thickness, a sd of the value itself for the other two.
 It is NaN for a single film, which is honest — one film measures no
 reproducibility at all.
 

@@ -2,7 +2,7 @@
 
 Compares two ways of getting a thickness *score* prediction out of a GP:
 
-  A. train on the score directly            (what the repo does today)
+  A. train on the score directly            (what the repo did before v2; it now does B)
   B. train on raw nanometres, then push the posterior through the 650 nm
      Gaussian analytically via ObjectiveTransform.expected_transform
 

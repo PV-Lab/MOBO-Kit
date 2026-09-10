@@ -673,3 +673,32 @@ def test_signal_collapse_guard_passes_a_healthy_fit() -> None:
         variant=DIM_SCALED_PRIOR,
     )
     assert record.model is not None
+
+
+def test_signal_collapse_guard_compares_like_with_like_on_a_nanometre_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The guard compared a latent sd in the target's own units with a noise sd in
+    Standardize-d units, so on thickness in nanometres (std in the hundreds) a
+    collapse was scaled up by std(y) and could never trip. A partial collapse --
+    latent sd about a thousandth of the noise -- must trip whatever the units."""
+    X = torch.rand(10, 2, dtype=torch.double)
+    Y = (500.0 + 250.0 * torch.rand(10, 1, dtype=torch.double)).double()
+    real_fit = validation_module.fit_gpytorch_mll
+
+    def partial_collapse(mll):
+        real_fit(mll)
+        mll.model.covar_module.outputscale = torch.tensor(1e-6, dtype=torch.double)
+        mll.model.likelihood.noise = torch.tensor(0.9, dtype=torch.double)
+        return mll
+
+    monkeypatch.setattr(validation_module, "fit_gpytorch_mll", partial_collapse)
+    with pytest.raises(ModelFitError) as excinfo:
+        fit_model_variant(
+            X,
+            Y,
+            sample_ids=tuple(range(10)),
+            objective_names=("y",),
+            variant=DIM_SCALED_PRIOR,
+        )
+    assert excinfo.value.stage == "signal_collapse_guard"

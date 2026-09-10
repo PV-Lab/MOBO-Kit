@@ -600,6 +600,14 @@ def _assert_signal_not_collapsed(
         # whichever row happens to be first
         noise_values = gp.likelihood.noise.detach().reshape(-1)
         noise_sd = float(noise_values.mean() ** 0.5)
+        # The posterior above is UNTRANSFORMED -- in the target's own units -- but
+        # the likelihood's noise lives in the Standardize-d space. Put the noise in
+        # the target's units too, or the ratio below is off by std(y): about 250x
+        # too lenient for thickness in nanometres, where the guard could never
+        # fire, and about 13x too eager for a 0-1 score.
+        stdvs = getattr(getattr(gp, "outcome_transform", None), "stdvs", None)
+        if stdvs is not None:
+            noise_sd *= float(stdvs.detach().reshape(-1)[0])
         observed = target.detach().reshape(-1)
         target_spread = float(observed.std()) if observed.numel() > 1 else 0.0
     if noise_sd <= 0.0:

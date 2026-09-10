@@ -219,8 +219,9 @@ src/mobo_kit/
 
   research_qnehvi.py      qNEHVI as a research-only R2 variant, NOT the campaign
 
-configs/   campaign_d2d_perovskite_test.yaml (the live campaign),
-           campaign_d2d_perovskite.yaml (archived, first campaign) + two examples
+configs/   campaign_d2d_perovskite_final.yaml (the live campaign),
+           campaign_d2d_perovskite_test.yaml and campaign_d2d_perovskite.yaml
+           (archived), two diagnostics, two examples
 docs/      HANDOFF.md, CAMPAIGN_STATUS.md, GP_MODEL_DECISION.md,
            R1_BATCH_WITHDRAWAL.md, ROUND_SIM_DELTA.md, ROUND_SIM_MANIFEST.md,
            SHAP_SUMMARY.md
@@ -228,7 +229,7 @@ scripts/   diagnostics, report figures, intake_new_data.py,
            dtlz2_parameter_sweep.py, plot_round_simulation.py,
            plot_shap_attribution.py, permutation_rank_test.py,
            generate_round_report.py
-tests/     601 tests
+tests/     pytest suite; docs/HANDOFF.md keeps the expected count
 launch_mobo_kit.bat, launch_mobo_kit.command   double-click entry points
 ```
 
@@ -239,31 +240,28 @@ becomes a utility**, because the two are not always the same column:
 
 ```yaml
 objectives:
-  contract_version: d2d-objectives-v2-nm-thickness
+  contract_version: d2d-objectives-v4-final-nomean
   scaling_mode: fixed_affine
   specs:
     - name: thickness
       model_source_column: "Thickness (avg)"   # stored cell: cross-check only
       transform: gaussian_target               # utility peaks at the target
+      goal: target
       target: 650.0
-      sigma: 176.7766952966369
+      sigma: 176.7766952966369                 # the sheet's 250, as 250/sqrt(2)
       measurement:                             # what the GP actually trains on
         recipe: mean_of_present                # mean of whichever were measured
         inputs: [{column: T1}, {column: T2}, {column: T3}, {column: T4}]
         excluded: [{column: "T anom"}]         # operator-flagged, never averaged
-        cross_check: [{column: "Thickness (avg)", atol: 0.5}]
-      mean_function:                           # physics-informed trend
-        response: log
-        features:
-          - {column: speed_1, transform: log}
-          - {column: precur_conc, transform: log}
+        cross_check: [{column: "Thickness (avg)", atol: 1.0e-9}]
+      replicate_aggregate: mean                # must match the model's space: nm
 ```
 
-The `measurement` block exists because several of the workbook's derived score
-cells are pasted literals rather than formulas, so they do not update when the
-measurements behind them are edited. `scores.py` recomputes each objective from
-the raw columns and demotes the stored cell to a cross-check that warns on
-disagreement — see `docs/CAMPAIGN_STATUS.md` issue 2 for the audit.
+The `measurement` block says what the model trains on. For thickness that is the
+mean of the T readings, recomputed from the raw columns so that an
+operator-flagged reading can be excluded and reported, with the stored cell
+demoted to a cross-check. Uniformity and optoelectronic use `recipe: stored` in v4:
+the score cell is the value, because the score is the group's own definition.
 
 Objective scales are **fixed for the whole campaign** and must never be
 re-derived from observed data — otherwise utility space moves between rounds and
@@ -275,13 +273,14 @@ hypervolume stops being comparable across them.
 
 | Setting | Value | Config key |
 |---|---|---|
-| UCB beta (R1) | 36.0 | `rounds.r1.beta` |
-| Local penalization radius | 0.35 | `local_penalization.radius` |
+| UCB beta (R1) | 4.0 | `rounds.r1.beta` |
+| Local penalization radius | 0.25 | `local_penalization.radius` |
 | Minimum batch spacing | 0.15 | `local_penalization.min_batch_distance` |
 | Candidate pool | 32768 | `rounds.*.candidate_pool_size` |
 | Posterior samples (R1) | 256 | `rounds.r1.posterior_samples` |
 | MC samples (R2) | 128 | `rounds.r2.mc_samples` |
 | GP variant | `dim_scaled_prior` | `model.variant` |
+| Observation noise | `replicate_pooled` — measured from the R1 triplicates | `model.observation_noise` |
 | Seed | 73 | `reproducibility.seed` |
 
 All of these are campaign configuration, not code. Tuning them does not require

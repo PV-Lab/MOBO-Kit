@@ -123,7 +123,9 @@ def test_the_floor_is_a_floor_not_the_estimate() -> None:
     assert sanity_floor_findings(pooled, {"thickness": WITHIN_FILM_LOG_THICKNESS_VARIANCE}) == ()
 
 
-def test_the_live_config_declares_the_floor_and_the_r0_policy() -> None:
+def test_the_archived_v2_config_declares_its_log_floor_and_the_r0_policy() -> None:
+    """The FIRST campaign's config, which trained thickness on log T. The live
+    contract's floor is pinned in test_final_campaign.py, in nm^2."""
     from mobo_kit.campaign import load_campaign_config
 
     config = load_campaign_config("configs/campaign_d2d_perovskite.yaml")
@@ -274,3 +276,115 @@ def test_a_round_accepts_measured_variance_end_to_end() -> None:
     result = run_r1_ucb(config, X, Y, n=3, observed_Yvar=yvar)
     assert result.n_conditions == 3
     assert math.isfinite(result.diagnostics["validity"]["min_pairwise_distance"])
+
+
+# --------------------------------------------------------------------------- #
+# the live contract, after the R1 triplicates (2026-09-10)
+# --------------------------------------------------------------------------- #
+
+LIVE = "configs/campaign_d2d_perovskite_final.yaml"
+
+
+def _results(spread: float):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        replicate_spread=_spread({name: [spread, spread] for name in NAMES}),
+        films_used=_films({name: [3, 3] for name in NAMES}),
+    )
+
+
+def _pooled_config(path: str, **thickness: str) -> dict:
+    import copy
+
+    from mobo_kit.campaign import load_campaign_config
+
+    config = copy.deepcopy(load_campaign_config(path))
+    config["model"]["observation_noise"] = "replicate_pooled"
+    for entry in config["objectives"]["specs"]:
+        if entry["name"] == "thickness":
+            entry.update(thickness)
+    return config
+
+
+def test_the_live_config_pools_by_film_count_without_a_floor_alarm() -> None:
+    """The live config's thickness rule is accepted; a single-film row takes the
+    whole pooled variance and a triplicate a third; and an nm-scale variance clears
+    the 91.2 nm^2 floor. That the variance really arrives in nm is exercised on the
+    real sheets in test_final_campaign.py."""
+    from mobo_kit.campaign import replicate_aggregates
+    from mobo_kit.replicate_variance import yvar_for_campaign
+
+    config = _pooled_config(LIVE)
+    yvar, findings = yvar_for_campaign(
+        config,
+        _results(20.0),
+        n_rows_without_replicates=2,
+        objective_names=NAMES,
+        aggregates=replicate_aggregates(config),
+    )
+    column = NAMES.index("thickness")
+    assert yvar[0, column] == pytest.approx(400.0)
+    assert yvar[-1, column] == pytest.approx(400.0 / 3)
+    # 400 nm^2 sits well above the 91.2 nm^2 floor of a film mean
+    assert findings == ()
+
+
+def test_a_log_aggregation_on_a_nanometre_model_is_refused() -> None:
+    """The failure that would have shipped silently: the model learns thickness in
+    nm, the aggregation pooled log T, and 0.0019 went in as nm^2."""
+    from mobo_kit.campaign import CampaignConfigError, replicate_aggregates
+
+    config = _pooled_config(LIVE, replicate_aggregate="mean_of_log")
+    with pytest.raises(CampaignConfigError, match="'identity' link"):
+        replicate_aggregates(config)
+
+
+def test_a_log_model_keeps_its_log_aggregation_and_refuses_the_reverse() -> None:
+    """The archived v2 contract trains thickness on log T under a log mean
+    function; the guard must leave that pairing alone."""
+    from mobo_kit.campaign import CampaignConfigError, replicate_aggregates
+
+    config = _pooled_config("configs/campaign_d2d_perovskite.yaml")
+    assert replicate_aggregates(config)[NAMES.index("thickness")] == "mean_of_log"
+    config = _pooled_config(
+        "configs/campaign_d2d_perovskite.yaml", replicate_aggregate="mean"
+    )
+    with pytest.raises(CampaignConfigError, match="'log' link"):
+        replicate_aggregates(config)
+
+
+def test_a_variance_the_model_cannot_hold_is_refused_not_floored() -> None:
+    """BoTorch standardizes train_Yvar and gpytorch floors the result at 1e-6, so a
+    variance in the wrong units used to land on that floor with only a filtered
+    library warning. A round now checks the noise it asked for is the noise the
+    model holds."""
+    from mobo_kit.campaign import (
+        CampaignConfigError,
+        fit_campaign_models,
+        load_campaign_config,
+    )
+    from mobo_kit.design import build_design_from_config
+    from mobo_kit.lhs import lhs_dataframe_optimized
+
+    config = load_campaign_config(LIVE)
+    design = build_design_from_config(dict(config))
+    X = lhs_dataframe_optimized(design, 12, seed=5, snap_to_grids=True).to_numpy(float)
+    rng = np.random.default_rng(0)
+    Y = np.column_stack(
+        [
+            rng.uniform(0.6, 0.9, 12),
+            rng.uniform(0.45, 0.75, 12),
+            rng.uniform(380.0, 1300.0, 12),
+        ]
+    )
+    measured = np.column_stack(
+        [np.full(12, 0.002), np.full(12, 0.001), np.full(12, 660.0)]
+    )
+    model, _ = fit_campaign_models(config, X, Y, seed=73, Yvar=measured)
+    assert model is not None
+
+    wrong_units = measured.copy()
+    wrong_units[:, 2] = 0.0019 / 3.0  # a variance of log T, handed to an nm model
+    with pytest.raises(CampaignConfigError, match="thickness"):
+        fit_campaign_models(config, X, Y, seed=73, Yvar=wrong_units)

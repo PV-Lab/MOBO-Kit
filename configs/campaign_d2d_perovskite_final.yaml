@@ -235,7 +235,18 @@ objectives:
       cross_check:
         - {column: "Thickness (avg)", atol: 1.0e-9}
       spread_warning_ratio: 0.25
-    replicate_aggregate: mean_of_log
+    # PLAIN MEAN, in nanometres -- changed from mean_of_log on 2026-09-10.
+    #
+    # The replicate rule must match the space the GP trains in. mean_of_log (the
+    # geometric mean, with the replicate sd taken on log values) was right while
+    # the mean function below declared `response: log` and the model learned
+    # log T. When that prior was withdrawn on 2026-09-06 the model moved to
+    # nanometres and this key did not. With measured noise switched on, the pooled
+    # variance of log T (0.0019) then reached the nm model as nm^2 -- a noise sd
+    # of a fraction of a nanometre against a measured 26 nm -- and nothing
+    # errored. The means themselves move by at most 1 nm. A mismatch between this
+    # key and the model's link is now refused.
+    replicate_aggregate: mean
     # NO MEAN FUNCTION. Withdrawn 2026-09-06 by the group's decision, after the
     # physics justification failed its one clean test.
     #
@@ -368,25 +379,49 @@ local_penalization:
 
 model:
   variant: dim_scaled_prior
-  # Once the R1 triplicates land, switch to `replicate_pooled` -- one key.
-  observation_noise: fit_from_marginal_likelihood
+  # MEASURED NOISE ("option C"), switched on 2026-09-10 when the R1 triplicates
+  # came back; the group chose it on 2026-09-06. Each R1 condition enters the GP
+  # as the mean of its films, with ONE between-film variance per objective pooled
+  # across the conditions (a per-condition variance would rest on 2 dof), divided
+  # by the number of films in that row. It is not "one key": it also needs every
+  # replicate_aggregate to match its model's space (thickness: `mean`, in nm),
+  # which is now enforced, and a floor in the same units (below).
+  #
+  # Measured on the R1 triplicates (5 conditions x 3 films, 10 dof each), against
+  # the noise the model fitted for itself on the same 20 observations:
+  #   uniformity       sd 0.0443     (fitted 0.0062)
+  #   optoelectronic   sd 0.0294     (fitted 0.0058)
+  #   thickness        sd 25.7 nm    (fitted 17.3 nm)
+  # On the two score axes the fitted noise was 5-7x too small, so the model was
+  # crediting film-to-film scatter to the recipe.
+  observation_noise: replicate_pooled
 
   replicate_variance:
     # TWO DIFFERENT VARIANCES. Do not substitute one for the other.
     #
-    # BETWEEN-FILM is what train_Yvar needs and is only measurable once R1 ships
-    # triplicates. WITHIN-FILM is the scatter of the 3-4 thickness points across
-    # one film, available today, and contains NO run-to-run variation -- so it is
-    # a FLOOR, not an estimate. If pooled between-film variance ever lands below
-    # it, films would be more reproducible than points on a single film.
+    # BETWEEN-FILM is what train_Yvar needs: the scatter of film MEANS across films
+    # made from the same recipe, pooled over the R1 triplicates. For thickness it
+    # is 662.7 nm^2 (sd 25.7 nm, 10 dof).
     #
-    # RECOMPUTED ON THIS WORKBOOK, 2026-09-02: 0.003007 on log(T), 36 dof
-    # (sd 0.0548), against v3's 0.006374. Roughly half, and the reason is visible:
-    # sample 1's 418.5 reading moved into `T anom` on this sheet, which took that
-    # film's sd_log from 0.218 to 0.085. Inheriting v3's constant would have set
-    # the floor twice too high and called an ordinary pooled variance a mistake.
+    # WITHIN-FILM is the scatter of the 3-4 thickness points across one film. It
+    # contains no run-to-run variation, so it sets a FLOOR -- but only once it is
+    # in the same units as the between-film number: the variance of a film MEAN,
+    # the per-reading variance divided by the readings per film. On the R1 films
+    # that is 282.99 nm^2 per reading (32 dof) x mean(1/n) 0.3222 = 91.2 nm^2
+    # (sd 9.5 nm). The between-film 662.7 clears it by 7x.
+    #
+    # THE OLD FLOOR WAS WRONG TWICE OVER. 0.003007 was the variance of ONE log(T)
+    # reading on the R0 films: log units for a model that trains in nm, and a
+    # single reading compared against a mean of about three. On the first real
+    # triplicates it fired a false alarm (0.0019 "below" 0.003007).
     sanity_floor:
-      thickness: 0.003007
+      thickness: 91.2
+    # Each R0 row is a single film, so it takes the whole pooled variance. That
+    # assumes R0 and R1 films are equally reproducible, and the data say the R0
+    # films were less even across the film (41.9 nm per reading against 16.8 nm on
+    # R1), so the R0 rows' thickness noise is understated: a like-for-like value
+    # would be about 1100 nm^2 against the 662.7 used. Checked in the pre-R2 audit:
+    # giving R0 rows 1097.6 nm^2 leaves the R2 batch unchanged, 3 conditions of 3.
     rows_without_replicates: 1
 
 reproducibility:

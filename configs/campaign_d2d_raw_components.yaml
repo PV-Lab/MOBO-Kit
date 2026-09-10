@@ -121,11 +121,12 @@ objectives:
       cross_check:
         - {column: "Thickness (avg)", atol: 1.0e-9}
       spread_warning_ratio: 0.25
-    replicate_aggregate: mean_of_log
-    # No mean function, matching the live contract since 2026-09-06, when the
-    # thickness prior was withdrawn. This file was written while the prior was
-    # still live and carried it; left in place it would have made this axis
-    # differ from the control it claims to be.
+    # Plain mean in nm and no mean function, both matching the live contract
+    # (the mean function was withdrawn 2026-09-06, the aggregation followed on
+    # 2026-09-10). This file was written while the prior was still live and
+    # carried both; left in place they would have made this axis differ from the
+    # control it claims to be.
+    replicate_aggregate: mean
 
 reference_point_utility: [-0.01, -0.01, -0.01]
 
@@ -174,8 +175,9 @@ model:
   variant: dim_scaled_prior
   observation_noise: fit_from_marginal_likelihood
   replicate_variance:
+    # Mirrors the live contract: the within-film variance of a film MEAN, in nm^2.
     sanity_floor:
-      thickness: 0.003007
+      thickness: 91.2
     rows_without_replicates: 1
 
 reproducibility:

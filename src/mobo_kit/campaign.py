@@ -256,7 +256,7 @@ def objective_names(config: Mapping[str, Any]) -> tuple[str, ...]:
 #: How the replicate films of one condition become one training observation.
 #: ``mean`` is the arithmetic mean of the film values.  ``mean_of_log`` is the
 #: geometric mean, which is the arithmetic mean *in the space the GP trains in*
-#: whenever that objective's mean function declares ``response: log``.
+#: only when that objective's mean function declares ``response: log``.
 REPLICATE_AGGREGATES = frozenset({"mean", "mean_of_log"})
 
 
@@ -264,15 +264,18 @@ def replicate_aggregates(config: Mapping[str, Any]) -> tuple[str, ...]:
     """The replicate-aggregation rule per objective, in objective order.
 
     Declared per objective because the right answer depends on the space the
-    model works in, not on taste.  Thickness trains on ``log T``, so averaging
-    three films in log space is what makes the aggregation and the Phase 4
-    variance pooling consistent with each other; the other two objectives train
-    on their own scale and use the plain mean.
+    model works in, not on taste: the rule must match the objective's model
+    link.  ``mean_of_log`` belongs only with a ``response: log`` mean function,
+    whose GP trains on ``log y``; every other objective -- all of v4, including
+    thickness in nanometres since its prior was withdrawn -- uses ``mean``.
 
-    The difference is second order in the replicate spread -- under 0.1% at the
-    3% within-film spread most R0 rows show, but around 14% on a film set as
-    inconsistent as sample 12's.  It is one config key, so it can be revisited
-    without touching code.
+    **A mismatch is refused, whatever the noise setting.** The rule sets both the
+    training value and the space the replicate variance is pooled in. The value
+    error is second order (under 1 nm on the R1 thickness means), but the
+    variance error is not: on 2026-09-10 a variance of ``log T`` pooled under
+    ``mean_of_log`` would have reached a model training on nanometres as nm^2 --
+    a noise sd of a fraction of a nanometre against a measured 26 nm -- with no
+    error anywhere, because ``Standardize`` rescales whatever variance it is given.
     """
     specs = _objective_specs(config)
     entries = config["objectives"]["specs"]
@@ -283,6 +286,16 @@ def replicate_aggregates(config: Mapping[str, Any]) -> tuple[str, ...]:
             raise CampaignConfigError(
                 f"Objective {spec.name!r} declares replicate_aggregate {rule!r}; "
                 f"expected one of {sorted(REPLICATE_AGGREGATES)}."
+            )
+        if (rule == "mean_of_log") != (spec.model_link == "log"):
+            expected = "mean_of_log" if spec.model_link == "log" else "mean"
+            raise CampaignConfigError(
+                f"Objective {spec.name!r} declares replicate_aggregate {rule!r}, "
+                f"but its model trains with a {spec.model_link!r} link, so its "
+                f"replicate films must be averaged -- and their variance pooled -- "
+                f"with {expected!r}. A variance pooled in the wrong space reaches "
+                "the GP wrong by a factor of y^2 and nothing complains. Set "
+                f"replicate_aggregate: {expected}."
             )
         rules.append(rule)
     return tuple(rules)
@@ -548,11 +561,13 @@ def _fit_models(
     it and no caller has to add it back.  Objectives without one are unchanged.
 
     ``Yvar_model`` is measured observation variance in the MODEL TARGET space, one
-    column per objective -- so for thickness that is the variance of ``log T``, not
-    of nanometres, because ``response: log`` means the model trains on the log.
-    :func:`replicate_variance.pool_between_film_variance` produces it in exactly
-    that space, which is why aggregation and variance pooling are required to share
-    one space.
+    column per objective: nm^2 for thickness in v4, whose model trains on
+    nanometres, and a variance of ``log y`` only for an objective whose mean
+    function declares ``response: log``.
+    :func:`replicate_variance.pool_between_film_variance` pools it in the
+    aggregation space, :func:`replicate_aggregates` refuses an aggregation space
+    that differs from the link, and after each fit the noise the model holds is
+    checked against the variance it was given.
     """
     variant = model_variant_spec(str(config.get("model", {}).get("variant")))
     specs = _objective_specs(config)
@@ -590,7 +605,27 @@ def _fit_models(
                 ).unsqueeze(-1)
             ),
         )
-        models.append(record.model.models[0])
+        gp = record.model.models[0]
+        models.append(gp)
+        if Yvar_model is not None:
+            # BoTorch standardizes train_Yvar and gpytorch then floors it at 1e-6,
+            # so a variance in the wrong units lands on that floor and the model
+            # runs on a noise nobody measured. The only symptom is a library
+            # warning, filtered out below. So check the noise that arrived.
+            asked = np.asarray(Yvar_model, dtype=float)[:, index]
+            scale = float(gp.outcome_transform.stdvs.detach().reshape(-1)[0]) ** 2
+            held = gp.likelihood.noise.detach().reshape(-1).cpu().numpy() * scale
+            if not np.allclose(held, asked, rtol=1e-6, atol=0.0):
+                worst = int(np.argmax(np.abs(held - asked) / np.maximum(asked, 1e-300)))
+                raise CampaignConfigError(
+                    f"Objective {spec.name!r}: the model was given a measured noise "
+                    f"variance of {asked[worst]:.4g} on row {worst + 1} but holds "
+                    f"{held[worst]:.4g}. The variance is too small for the target's "
+                    f"scale (variance {float(np.var(y)):.4g}) and was floored -- "
+                    "almost always a variance in the wrong units, such as one of "
+                    "log(y) handed to a model that trains on y. Check "
+                    "replicate_aggregate against the objective's model link."
+                )
         # A fit can succeed and still be worth distrusting -- most importantly when
         # the GP's signal component collapsed but the mean function carried the
         # trend. Discarding these is how such a fit reaches a batch silently.

@@ -278,7 +278,7 @@ class _RoundBlock:
 def _observations_by_round(
     workbook: Path, config: Mapping[str, Any]
 ) -> list[_RoundBlock]:
-    """R0 from Sheet1, then whichever candidate sheets are filled in.
+    """R0 from the source sheet, then whichever candidate sheets are filled in.
 
     A round whose sheet exists but is not fully measured is skipped rather than
     partially included: a hypervolume computed on half a round is not that round's
@@ -453,6 +453,7 @@ def _figure_loo_parity(
     names: Sequence[str],
     labels: Sequence[str],
     seed: int,
+    Yvar: np.ndarray | None = None,
 ) -> FigureRecord:
     """Predicted against measured, leave-one-out, in the measurement's own units.
 
@@ -463,10 +464,21 @@ def _figure_loo_parity(
 
     The numbers come from :mod:`mobo_kit.loocv`, which is the same fold loop
     ``scripts/intake_new_data.py`` uses -- not a reimplementation that agrees today.
+
+    ``Yvar`` is the round's measured replicate variance, one row per observation.
+    Observations are recipes -- an R1 condition enters as the mean of its films --
+    so no replicate film is ever held out with its siblings left in training.
     """
     entries = config["objectives"]["specs"]
     results = {
-        name: loo_predictions(config, entries[index], X_phys, Y_measured[:, index], seed=seed)
+        name: loo_predictions(
+            config,
+            entries[index],
+            X_phys,
+            Y_measured[:, index],
+            seed=seed,
+            y_var=None if Yvar is None else np.asarray(Yvar, dtype=float)[:, index],
+        )
         for index, name in enumerate(names)
     }
     null = null_loo_r2(len(Y_measured))
@@ -1204,6 +1216,7 @@ def generate_round_report(
     shap_max_instances: int = 15,
     progress: Callable[[str], None] | None = None,
     when: str | None = None,
+    observations: tuple[np.ndarray, np.ndarray, np.ndarray | None] | None = None,
 ) -> ReportManifest:
     """Render the round's figures beside the workbook and return the manifest.
 
@@ -1211,6 +1224,13 @@ def generate_round_report(
     batch figures. Without one this runs in ``data_only`` mode, which is what the
     "Figures from current data" button uses once measurements are entered and
     before anything is proposed.
+
+    ``observations`` is ``(X, Y, Yvar)`` exactly as the round's runner received
+    them: the source sheet plus the aggregated conditions of every finished round,
+    with the measured replicate variance when ``replicate_pooled`` is on. Pass it
+    with a proposal. Without it the report can only fit the source sheet, which
+    for R2 is a different model from the one that chose the batch -- on the first
+    R2 that put the expected hypervolume gain about 4x too high.
 
     A figure that fails is recorded in ``skipped`` and in ``notices`` and the rest
     of the report still renders. That is deliberate: losing the attribution panel
@@ -1243,14 +1263,35 @@ def generate_round_report(
 
     say("Reading the workbook...")
     contents = read_campaign_workbook(workbook, config)
-    X_phys = contents.inputs.to_numpy(float)
-    Y_measured = contents.model_values.to_numpy(float)
-    labels = [str(value) for value in contents.sample_ids]
     blocks = _observations_by_round(workbook, config)
+    if observations is not None:
+        X_phys = np.asarray(observations[0], dtype=float)
+        Y_measured = np.asarray(observations[1], dtype=float)
+        Yvar = (
+            None if observations[2] is None else np.asarray(observations[2], dtype=float)
+        )
+        # the source sheet's sample ids, then each finished round's condition ids,
+        # in the order the round stacked its observations
+        stacked = [label for block in blocks for label in block.labels]
+        labels = (
+            stacked[: len(X_phys)]
+            if len(stacked) >= len(X_phys)
+            else [str(position + 1) for position in range(len(X_phys))]
+        )
+        fitting = (
+            f"Fitting the model the round used ({len(X_phys)} observations"
+            + (", measured replicate noise)..." if Yvar is not None else ")...")
+        )
+    else:
+        X_phys = contents.inputs.to_numpy(float)
+        Y_measured = contents.model_values.to_numpy(float)
+        Yvar = None
+        labels = [str(value) for value in contents.sample_ids]
+        fitting = f"Fitting the model on the {len(X_phys)} source-sheet rows..."
 
-    say("Fitting the model the round used...")
+    say(fitting)
     model, model_warnings = fit_campaign_models(
-        config, X_phys, Y_measured, seed=resolved_seed
+        config, X_phys, Y_measured, seed=resolved_seed, Yvar=Yvar
     )
 
     figures: list[FigureRecord] = []
@@ -1286,7 +1327,7 @@ def generate_round_report(
     attempt(
         "01_loo_parity",
         lambda: _figure_loo_parity(
-            directory, config, X_phys, Y_measured, names, labels, resolved_seed
+            directory, config, X_phys, Y_measured, names, labels, resolved_seed, Yvar
         ),
     )
     attempt(

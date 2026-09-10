@@ -13,20 +13,27 @@ the same recipe differ by everything that varies run to run -- ambient condition
 the operator, the substrate, the anneal.  It only becomes measurable when the R1
 triplicates land.
 
-*Within-film* variance is the scatter of the 2-4 thickness points measured across
-one film.  It is measurement plus spatial nonuniformity, and it is available today:
-pooled over the R0 rows it is 0.0593 on ``log T``, 24 dof.  It is **not** a
-substitute.  It excludes run-to-run variation entirely, so it is a *floor* -- if the
-pooled between-film variance ever comes out below it, something is wrong with the
-measurement or the pooling, because films cannot be more reproducible than points
-on a single film.  :func:`sanity_floor_findings` says so rather than assuming it.
+*Within-film* variance is the scatter of the 3-4 thickness points measured across
+one film.  It is measurement plus spatial nonuniformity.  It is **not** a
+substitute.  It excludes run-to-run variation entirely, so it sets a *floor* -- but
+only in the same units as what it is compared against.  The pooled between-film
+variance is a variance of film MEANS, each averaging n readings, so the floor is
+the within-film variance of one reading divided by the readings per film.
+Comparing it with the variance of a single reading instead fired a false alarm on
+the first real triplicates (2026-09-10).  If the pooled between-film variance ever
+comes out below the correct floor, something is wrong with the measurement or the
+pooling.  :func:`sanity_floor_findings` says so rather than assuming it.
 
-**Space matters.**  Variance must be in the space the GP trains in.  Thickness
-trains on ``log T``, so its variance is of ``log T``; passing a variance in nm^2
-would be wrong by a factor of T^2, which over the observed range is 1.3e5 to 1.7e6
--- not even a constant rescaling.  :class:`workbook_io.CandidateResults` already
-reports ``replicate_spread`` in each objective's aggregation space for this reason,
-and that is the same space as the model's target by construction.
+**Space matters.**  Variance must be in the space the GP trains in.  Every v4
+objective trains on its own scale -- thickness in nanometres since its prior was
+withdrawn on 2026-09-06 -- so its variance is in its own units, nm^2 for
+thickness.  Only an objective with a ``response: log`` mean function trains on
+``log y`` and takes a variance of ``log y``.  A variance in the wrong space is
+wrong by a factor of y^2, not even a constant rescaling, and ``Standardize``
+rescales it without complaint.  :class:`workbook_io.CandidateResults` reports
+``replicate_spread`` in each objective's aggregation space, and
+:func:`campaign.replicate_aggregates` refuses an aggregation space that differs
+from the model's link, which is what keeps the two the same.
 
 **What the GP is told is the variance of the MEAN**, not of a single film.  The
 observation handed to the model is an average of ``n`` films, so its variance is
@@ -56,9 +63,12 @@ __all__ = [
     "yvar_for_campaign",
 ]
 
-#: Pooled within-row variance of ``log T`` across the 15 R0 rows, 24 dof, from the
-#: 2-4 thickness points each row carries.  A FLOOR for the between-film variance,
-#: never a replacement: it contains no run-to-run variation at all.
+#: ARCHIVED, from the FIRST campaign (v2), whose model trained thickness on
+#: ``log T``: a within-row figure on ``log T`` across its 15 rows, 24 dof. Kept
+#: because that contract's tests pin it. It is NOT a floor for the live contract,
+#: which trains thickness in nanometres and declares its own floor --
+#: ``model.replicate_variance.sanity_floor`` -- as the within-film variance of a
+#: film mean, in nm^2.
 WITHIN_FILM_LOG_THICKNESS_VARIANCE = 0.0593
 
 
