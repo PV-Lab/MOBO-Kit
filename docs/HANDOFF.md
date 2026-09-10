@@ -166,11 +166,22 @@ prior that earns its place; the live config declares none, and a test pins that.
 
 ## What is actually open
 
-1. **R2 is next.** R1 was proposed on 2026-09-07 at seed 73 (batch hash
-   `addc7edcabb0ac02`, reproduced by a second route before any film was made) and
-   run in triplicate; the results came back on 2026-09-10. The filled worklist
-   sits beside the workbook as `<workbook>_R1_Candidates.xlsx`, and the launcher
-   proposes R2 from the R0 rows plus the five R1 condition means.
+1. **R2 is proposed and waiting for films.** R1 was proposed on 2026-09-07 at
+   seed 73 (hash `addc7edcabb0ac02`), run in triplicate, and came back on
+   2026-09-10. R2 was proposed the same day through the launcher path from commit
+   `2351ca0`: seed 73, qLogNEHVI on the R0 rows plus the five R1 condition means
+   with measured noise, hash **`97bbd2cb85bb50b7`**, reproduced by a second route,
+   on grid, every constraint met. Three conditions × 3 films:
+
+   | | speed_1 | time_1 | speed_2 | time_2 | conc | vol | T anneal | t anneal | anti vol | anti time | predicted thickness |
+   |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+   | R2_C01 | 5500 | 30 | 1500 | 30 | 1.70 | 160 | 180 | 25 | 110 | 19 | 654 nm (592–716) |
+   | R2_C02 | 1000 | 10 | 4000 | 35 | 1.45 | 120 | 125 | 25 | 190 | 17 | 794 nm (750–839) |
+   | R2_C03 | 5500 | 10 | 2000 | 25 | 1.65 | 180 | 165 | 45 | 140 | 9 | 646 nm (575–716) |
+
+   With fitted noise instead of option C, the same seed gives `823fc41c73df4a57`,
+   which shares only R2_C02. Switching option C on is what moved the batch; the
+   fixes that came with it did not.
 2. **Option C is on for R2** (chosen 2026-09-06, switched on 2026-09-10): the GP
    gets each R1 condition's mean plus the between-film variance measured from its
    triplicates — `model.observation_noise: replicate_pooled` — rather than the 15

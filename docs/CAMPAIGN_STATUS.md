@@ -130,6 +130,13 @@ yet evidence of learning. Optoelectronic is still nothing.
 The three figures behind these tables are in `local_outputs/r1_results/`, which is
 not in git.
 
+**R2 was proposed the same day**, from commit `2351ca0` with option C on (measured
+replicate noise; see HANDOFF for what switching it on required): seed 73, hash
+`97bbd2cb85bb50b7`. Two of the three conditions are predicted on the thickness
+target (654 and 646 nm); the third trades thickness (794 nm) for the highest
+predicted optoelectronic score of the three. The uniformity and optoelectronic
+predictions are exploration only.
+
 ### What the final data supports
 
 `scripts/intake_new_data.py`, exact leave-one-out, null −0.1480 at N=15,

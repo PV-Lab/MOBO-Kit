@@ -380,9 +380,14 @@ def test_no_signal_objectives_are_labelled_in_the_data_not_just_the_picture(
 
 
 def test_the_notices_repeat_the_no_signal_verdicts(data_only) -> None:
+    """The verdict is the campaign's rank permutation test, not the leave-one-out
+    R2 printed beside it: -0.148 is not a significance bar, and on R2's 20 recipes
+    uniformity scores above it while still having no usable signal."""
     joined = " ".join(data_only.notices)
     assert "uniformity" in joined and "optoelectronic" in joined
-    assert "does not beat the leave-one-out null" in joined
+    assert "carries no usable signal" in joined
+    assert "not this report's R2" in joined
+    assert "does not beat" not in joined
 
 
 # --------------------------------------------------------------------------- #

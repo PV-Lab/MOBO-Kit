@@ -563,10 +563,12 @@ def _figure_loo_parity(
         "Leave-one-out, not in-sample: every point is predicted by a model that "
         "never saw it. An in-sample version of this plot looks far better and "
         "measures memorisation.",
-        f"The bar to clear is the NULL, {null:+.4f}, not zero. Predicting the "
-        "leave-one-out mean scores exactly that, whatever the data.",
-        "An axis marked NO LEARNABLE SIGNAL has a model that does not beat the "
-        "null. Its scatter is not a weak trend; it is nothing.",
+        f"{null:+.4f} is what predicting each point with the average of the others "
+        "scores. It is NOT a significance bar: at this size a model fitted to pure "
+        "noise beats it about one time in four, so clearing it proves nothing.",
+        "NO LEARNABLE SIGNAL is the campaign's own verdict, declared in the config "
+        "from a rank permutation test, whatever the R2 printed here. Its scatter is "
+        "not a weak trend.",
     ]
     if any(results[name].model_link == "log" for name in names):
         caveats.append(
@@ -1416,8 +1418,9 @@ def generate_round_report(
         status = str(entries[index].get("signal_status", ""))
         if status and status != "learnable":
             notices.append(
-                f"{name}: {status.replace('_', ' ')} -- its model does not beat the "
-                "leave-one-out null, so its predictions carry no signal."
+                f"{name}: {status.replace('_', ' ')} -- by the campaign's verdict (a "
+                "rank permutation test, not this report's R2) its model carries no "
+                "usable signal, so its predictions are exploration only."
             )
     for warning in model_warnings:
         notices.append(f"model fit warning: {warning}")
