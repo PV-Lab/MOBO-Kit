@@ -1,36 +1,40 @@
 # Campaign status and how to use it
 
-Snapshot for collaborators. The full loop runs: R0 LHS -> R1 UCB-HVI (5) ->
-R2 qLogNEHVI (3), three replicate films per condition, 23 distinct conditions.
+Snapshot for collaborators. The full loop runs: R0 LHS (15) -> R1 UCB-HVI (5) ->
+R2 qLogNEHVI (3). R0 is one film per condition; R1 and R2 conditions are made in
+triplicate. 23 distinct conditions, 39 films.
 
 ## The live campaign: contract v4, from 2026-09-02 — READ THIS FIRST
 
 **The final workbook arrived and the score contract moved again.** Uniformity and
-optoelectronic were renormalised a second time, and the group's decision this time
-is to **freeze them**: read the workbook's own score columns and compute nothing.
+optoelectronic were renormalised a second time, and the group's decision is to
+**read them as stored**: the workbook's own score columns are the objective values,
+and nothing is computed from their inputs.
 
 | | v2 — test data | v3 — test data | v4 — **the real campaign** |
 |---|---|---|---|
 | config | `campaign_d2d_perovskite.yaml` (archived) | `campaign_d2d_perovskite_test.yaml` (archived) | `campaign_d2d_perovskite_final.yaml` |
-| contract | `d2d-objectives-v2-nm-thickness` | `d2d-objectives-v3-test` | `d2d-objectives-v4-final` |
+| contract | `d2d-objectives-v2-nm-thickness` | `d2d-objectives-v3-test` | `d2d-objectives-v4-final-nomean` |
 | workbook | `Summary Table.xlsx` | `Summary Table Test.xlsx` | `Final Summary Table.xlsx` |
 | sheet | `Sheet1` | `Sheet1` | **`R0`** |
 | uniformity | `Coverage * (1-Uniformity) * Phase purity` | `mean(...)` computed | **read from AJ** |
 | optoelectronic | `log10(Voc * Photoconductance)` | `mean(...)` computed | **read from AK** |
 | thickness | computed from `T1..T4`, nm | unchanged | unchanged, readings now AC–AG |
 
-### The freeze, and what it costs
+### Scores read as stored, and what it costs
 
-Uniformity and optoelectronic use a new `stored` recipe: the workbook's score
+Uniformity and optoelectronic use the `stored` recipe: the workbook's score
 column *is* the objective value, with no recomputation. **This reverses this
 project's usual polarity**, which is "Python computes and the stored cell is
 demoted to a cross-check".
 
-**Why.** Both objectives have now been renormalised twice and the group is still
-revising them. Reimplementing a formula that is about to change means the code and
-the sheet disagree at exactly the moment someone edits the sheet, and the
-disagreement looks like a bug in whichever was checked second. Reading the value
-makes the workbook the single source of truth while the definition moves.
+**Why — the score value is the interface (the group's decision, 2026-09-06).** How
+uniformity and optoelectronic are scored is this group's own method; another group
+may score theirs differently. The toolkit's job is to optimise the number it is
+given, not to own the formula behind it, so neither the code nor the config
+describes how these scores are built. This replaces the earlier rationale — "read
+the value while the group is still revising the definitions" — which made reading
+the score sound temporary. It is not.
 
 **What it costs, stated plainly because it is the cross-check this project
 otherwise insists on:** there is **no independent recomputation** of these two
@@ -38,24 +42,23 @@ objectives, so a stale pasted literal in AJ or AK cannot be caught by comparing 
 against anything. Intake and every round report print that in one line.
 
 **What partly replaces it: `formula_fingerprint`.** The config records the formula
-text of each frozen column, and the read compares it — reading the formula, never
-evaluating it. Recorded on 2026-09-02:
+text of each score column as a tripwire, and the read compares it — reading the
+formula, never evaluating it. Comparison is row- and whitespace-independent, so
+one fingerprint covers all fifteen rows. **It notices a changed definition, not a
+stale value** — that gap is inherent to reading scores as stored and is asserted
+by a test so nobody later mistakes the fingerprint for a value check. A score
+column holding literals rather than formulas is flagged too.
 
-| column | recorded formula |
-|---|---|
-| AJ uniformity | `=(L2+O2+P2)/3` |
-| AK optoelectronic | `=(S2+((0.75*Y2)+(0.25*AB2)))/2` |
-| AH thickness (avg) | `=AVERAGE(AC2:AF2)` (cross-checked, not frozen) |
+**It has earned its place once already.** On 2026-09-07 it flagged that sample 1's
+optoelectronic cell weighted its terms differently from samples 2–15; the group
+corrected the workbook before R1 was proposed.
 
-Comparison is row- and whitespace-independent, so one fingerprint covers all
-fifteen rows. **It notices a changed definition, not a stale value** — that gap is
-inherent to freezing and is asserted by a test so nobody later mistakes the
-fingerprint for a value check. A score column holding literals rather than
-formulas is flagged too, since that is the one failure this contract cannot see.
+**It covers the `R0` sheet only.** R1 and R2 results are typed into the round's
+worklist as values, so there is no formula to compare there, and those scores are
+taken exactly as entered.
 
-**Unfreezing is a config edit, not a rebuild.** The v3 recipes (`mean`,
-`clamped_complement`, `capped_ratio`) stay in `scores.py`, unwired and tested. When
-the group settles the formulas, swap the recipe back and bump `contract_version`.
+The v2/v3 recipes (`mean`, `clamped_complement`, `capped_ratio`) stay in
+`scores.py` for the archived configs. The live contract does not use them.
 
 ### The sheet is `R0` now
 
@@ -300,9 +303,11 @@ of 45 moves the training mean further than dropping 1.
 
    `EXP(-((T-650)/250)²)` is non-monotone, so 500 nm and 800 nm map to the same
    score and the GP is asked to learn a fold. **This is why v4 trains thickness on
-   nanometres and applies the target afterwards** — and it is the strongest
-   available argument for eventually unfreezing uniformity and optoelectronic and
-   modelling their components rather than their composites.
+   nanometres and applies the target afterwards.** It was also the argument for
+   modelling uniformity and optoelectronic through their components rather than
+   their composites; the raw-component screen tested that on 2026-09-05 and it
+   does not help — every component fails on its own — and the group has since
+   made the score value the interface for both.
 
 **Caveats on this sheet.** Only samples 1–15 carry raw component data; 16–45 hold
 `AH`/`AI`/`AJ`/`AK`/`AL` as pasted literals with nothing underneath, so no

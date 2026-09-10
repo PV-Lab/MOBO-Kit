@@ -26,7 +26,7 @@ MIT, and demonstrated on slot-die coated perovskite films.
 | | v2 — test data | v3 — test data | v4 — **the real campaign** |
 |---|---|---|---|
 | config | `campaign_d2d_perovskite.yaml` (archived) | `campaign_d2d_perovskite_test.yaml` (archived) | `campaign_d2d_perovskite_final.yaml` |
-| contract | `d2d-objectives-v2-nm-thickness` | `d2d-objectives-v3-test` | `d2d-objectives-v4-final` |
+| contract | `d2d-objectives-v2-nm-thickness` | `d2d-objectives-v3-test` | `d2d-objectives-v4-final-nomean` |
 | workbook | `Summary Table.xlsx` | `Summary Table Test.xlsx` | `Final Summary Table.xlsx` |
 | sheet | `Sheet1` | `Sheet1` | `R0` |
 | purpose | early toolkit testing | rehearsing this contract's shape | **the experiment being run** |
@@ -36,21 +36,28 @@ v3's fitted numbers carry over** — they are about quantities that were redefin
 Each earlier contract is kept as a record, with a banner on every document that
 describes it. The launcher and every script default to v4.
 
-**In v4 the uniformity and optoelectronic scores are FROZEN**: they are read from
-the workbook as stored, with no recomputation in Python, because the group is
-still revising how they are defined. Thickness is still computed, because its
-definition has been stable and the recomputation is what lets an operator-flagged
-reading be excluded and reported. See `docs/CAMPAIGN_STATUS.md` for what freezing
-costs and what replaces the missing cross-check.
+**In v4 the uniformity and optoelectronic scores are read as stored — the score
+value is the interface.** How a group scores uniformity or optoelectronic is that
+group's own method, and another group may score differently, so the toolkit takes
+the number from the workbook and never re-derives it (the group's decision,
+2026-09-06). Thickness is still computed from `T1..T4`, because that is what lets
+an operator-flagged reading (`T anom`) be excluded and reported; the model learns
+the measured thickness and the 650 nm target is applied afterwards.
+
+**No objective carries a physics prior.** The thickness mean function was
+withdrawn on 2026-09-06, which is what the `-nomean` in the contract name records.
+See `docs/CAMPAIGN_STATUS.md` for what reading the scores as stored costs and which
+guards remain.
 
 ## The campaign loop
 
-A campaign runs in three rounds. Each proposed condition is run in triplicate so
-reproducibility can be measured.
+A campaign runs in three rounds. R0 makes one film per condition; every condition
+the optimiser proposes after that is made in triplicate, so reproducibility can be
+measured.
 
 | Round | Method | Conditions | Films |
 |---|---|---:|---:|
-| R0 | Latin hypercube sampling | 15 | 45 |
+| R0 | Latin hypercube sampling | 15 | 15 |
 | R1 | UCB-HVI + local penalization | 5 | 15 |
 | R2 | qLogNEHVI | 3 | 9 |
 

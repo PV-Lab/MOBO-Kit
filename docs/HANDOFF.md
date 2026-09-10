@@ -1,7 +1,6 @@
 # Handoff
 
-Read this first in a new session. Updated 2026-09-02, when the final workbook
-arrived and the score contract moved to v4.
+Read this first in a new session. Updated 2026-09-10, when the R1 films came back.
 
 ## What this repository is doing right now
 
@@ -10,7 +9,7 @@ arrived and the score contract moved to v4.
 | | v2 — test data | v3 — test data | v4 — **the real campaign** |
 |---|---|---|---|
 | config | `campaign_d2d_perovskite.yaml` (archived) | `campaign_d2d_perovskite_test.yaml` (archived) | `campaign_d2d_perovskite_final.yaml` |
-| contract | `d2d-objectives-v2-nm-thickness` | `d2d-objectives-v3-test` | `d2d-objectives-v4-final` |
+| contract | `d2d-objectives-v2-nm-thickness` | `d2d-objectives-v3-test` | `d2d-objectives-v4-final-nomean` |
 | workbook | `Summary Table.xlsx` | `Summary Table Test.xlsx` | `Final Summary Table.xlsx` |
 | sheet | `Sheet1` | `Sheet1` | `R0` |
 | purpose | early toolkit testing | rehearsing this contract's shape | **the experiment being run** |
@@ -19,13 +18,19 @@ v2 proved the loop worked. v3 rehearsed the shape of this contract on a workbook
 literally called "Test". **v4 is the campaign that produces films.** Uniformity
 and optoelectronic have been renormalised twice since v2, so none of the earlier
 fitted numbers transfer; every document about an earlier contract carries a banner
-saying so.
+saying so. v4 was `d2d-objectives-v4-final` until 2026-09-06; the `-nomean`
+suffix records that the thickness prior was withdrawn that day.
 
-**In v4 those two objectives are FROZEN** — read from the workbook as stored, with
-no recomputation, because the group is still revising the definitions. That is a
-deliberate reversal of this project's usual polarity and it removes a cross-check;
-`formula_fingerprint` is the partial replacement, and it notices a changed
-*definition* rather than a stale *value*. Thickness is still computed.
+**In v4 those two objectives are read as stored, permanently: the score value is
+the interface.** How the group scores uniformity and optoelectronic is its own
+method, and another group may score differently, so the toolkit takes the number
+from the workbook and never re-derives it (the group's decision, 2026-09-06; it
+replaces the earlier "read the value while the definitions are being revised").
+That is a deliberate reversal of this project's usual polarity and it removes a
+cross-check; `formula_fingerprint` is the partial replacement. It notices a
+changed *definition* rather than a stale *value*, and it applies to the `R0` sheet
+only, because R1 and R2 results are typed into the worklist as values. Thickness
+is still computed.
 
 **The workbook's sheet is now `R0`**, not `Sheet1`, so the source sheet is a config
 key (`campaign.source_sheet`) rather than a constant. The workbook also carries an
@@ -61,8 +66,10 @@ Then verify the state yourself:
 pytest -q
 ```
 
-Expect **601 passed, 0 failed, 28 warnings** (~185 s). Nothing in the suite needs a
-private workbook; the tests that would use one skip when it is absent.
+Expect **630 passed, 0 failed, 30 warnings** (measured 2026-09-10; about 6.5 min
+with other work sharing the machine, so re-time on an idle one before quoting a
+duration). Nothing in the suite needs a private workbook; the tests that would use
+one skip when it is absent.
 
 **`--capture=sys` in `addopts` is load-bearing, not a preference.** pytest's
 default fd-level capture swaps file descriptors 1 and 2, and a Tk interpreter built
@@ -126,44 +133,52 @@ recipe ICC of **0.000**, and uniformity is reproducible (ICC **0.730**) but not
 predictable from ten inputs at fifteen distinct recipes. Neither is reachable by
 any beta.
 
-**The campaign runs `beta = 4.0` and `radius = 0.25`** as of 2026-09-03. At
-beta = 36 the radius knob was provably inert — radii 0.15, 0.25 and 0.35 return
-bit-identical batches — and 18 of 50 proposed coordinates sat on a grid bound;
-at beta = 4 / radius 0.25 that falls to 11. See CAMPAIGN_STATUS.md, "Are
-beta = 4.0 and radius = 0.25 defensible?", including why the hypervolume column
-of that table must not be read as a ranking.
+**The campaign runs `beta = 4.0` and `radius = 0.25`, with no trust region** —
+set on 2026-09-03 and re-confirmed before R1. At beta = 36 the radius knob was
+provably inert — radii 0.15, 0.25 and 0.35 return bit-identical batches — and 18
+of 50 proposed coordinates sat on a grid bound; at beta = 4 / radius 0.25 that
+falls to 11 at seed 73 (11–16 across seeds, so a weak discriminator on its own).
+The choice was re-checked on a box-plot sweep (beta 1–25 × radius 0.05–0.45, five
+acquisition seeds) against a random-acquisition baseline, which is the honest
+"did it climb?" reference; that sweep is the group's internal material and is not
+in the repository. See CAMPAIGN_STATUS.md, "Are beta = 4.0 and radius = 0.25
+defensible?", including why the hypervolume column of that table must not be read
+as a ranking.
 
 **Uniformity and optoelectronic are read from the workbook, not computed.** No
 independent recomputation exists under this contract. The formula fingerprints
 notice a changed *definition*; nothing here can notice a value that has gone
-stale. That is the price of the freeze, and it is paid deliberately.
+stale. That is the price of taking the score as the interface, and it is paid
+deliberately.
 
 **The v3 photoconductance inversion is fixed.** Its normalised column ranked
 backwards against its own raw measurement (Spearman -0.5484, p = 0.0343); on v4
 the same comparison gives **+1.0000**. Issue 10 is closed. The diagnostic stays on
 because the failure is silent when it recurs.
 
-**Thickness keeps its mean function on the rank permutation**, not on R². Intake
-leaves it *inconclusive on R²* — the swing sits inside the floor, which is a
-statement that R² cannot resolve it at N=15 rather than a verdict. Rank is what
-the acquisition consumes; it never sees R². **Do not quote the swing as
-evidence.** Measured on v4: observed rank ρ **+0.6500**, null mean −0.1892
-(sd 0.2944), **9 exceedances in 1800**, **p = 0.0056, 95% CI [0.0021, 0.0090]**.
+**Thickness has no mean function — the prior was withdrawn on 2026-09-06 — and it
+still earns `learnable` on its rank permutation test**, re-measured on the plain
+GP after the withdrawal: observed rank ρ **+0.8036**, null mean −0.1762 (sd
+0.4070), null 95th percentile +0.5607, **9 exceedances in 1800**, **p = 0.0056,
+95% CI [0.0021, 0.0090]**. Removing the prior cost R² (+0.7423 → +0.5823), not the
+verdict. `structured_mean.py` stays in the package, wired and tested, for a future
+prior that earns its place; the live config declares none, and a test pins that.
 
 ## What is actually open
 
-1. **No batch has been proposed on the live campaign yet.** Pressing **Propose
-   R1** writes the worklist, the Review sheet and six figures. Fifteen films is a
-   real cost, and whether to fabricate is a human decision that is not automated.
-2. **The frozen scores are temporary.** The group will settle how uniformity and
-   optoelectronic are computed and then unfreeze them. The v3 recipes (`mean`,
-   `clamped_complement`, `capped_ratio`) remain in `scores.py`, unwired, so that
-   is an edit rather than a rebuild. Unfreezing means a new `contract_version`.
-3. **Phase 4 waits on the R1 triplicates.** `replicate_variance.py` is wired and
-   tested; enabling it is one config key, `model.observation_noise:
-   replicate_pooled`. The `replicate_variance.sanity_floor` for thickness is still
-   v3's 0.006374 and should be recomputed on v4's readings, which changed.
-4. **`anneal_temp` sits at a range edge in proposed conditions.** If the group
+1. **R2 is next.** R1 was proposed on 2026-09-07 at seed 73 (batch hash
+   `addc7edcabb0ac02`, reproduced by a second route before any film was made) and
+   run in triplicate; the results came back on 2026-09-10. The filled worklist
+   sits beside the workbook as `<workbook>_R1_Candidates.xlsx`, and the launcher
+   proposes R2 from the R0 rows plus the five R1 condition means.
+2. **Option C for R2's model** (chosen 2026-09-06): the GP gets each R1
+   condition's mean plus the between-film variance measured from its triplicates
+   — `model.observation_noise: replicate_pooled` — rather than the 15 raw rows,
+   which carry the same information. `replicate_pooled` pools ONE variance per
+   objective across conditions (a per-condition variance would rest on 2 dof);
+   each row then gets that variance divided by its film count, so each R0 row, a
+   single film, gets it whole.
+3. **`anneal_temp` sits at a range edge in proposed conditions.** If the group
    would never anneal below some temperature, that belongs in `constraints:` —
    now a live list with three entries, so adding one is a two-line change.
 
@@ -197,6 +212,13 @@ inside a floor twice before adopting that rule.
   `contract_version` would make their hypervolumes look comparable when they
   measure different spaces. That is why every redefinition arrives as a new
   config file rather than an edit -- three times now.
+- **Uniformity and optoelectronic are read as stored, for good** (2026-09-06).
+  Do not re-derive them from their components or re-encode the group's formulas:
+  the score value is the interface, and the raw-component screen (2026-09-05)
+  found that every component fails on its own anyway.
+- **No objective carries a prior.** The thickness mean function was withdrawn on
+  2026-09-06 after its physics justification failed. Bringing one back is a
+  design decision for the group, and it needs a permutation test of its own.
 - **`ObjectiveTransform.transform` takes MODEL-space values, not measurements.**
   It decodes the link itself, so handing it thickness in nanometres exponentiates
   a value that was never a logarithm. Use `transform.transform_measurements` at

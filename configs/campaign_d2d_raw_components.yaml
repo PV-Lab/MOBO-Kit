@@ -122,11 +122,10 @@ objectives:
         - {column: "Thickness (avg)", atol: 1.0e-9}
       spread_warning_ratio: 0.25
     replicate_aggregate: mean_of_log
-    mean_function:
-      response: log
-      features:
-        - {column: speed_1, transform: log}
-        - {column: precur_conc, transform: log}
+    # No mean function, matching the live contract since 2026-09-06, when the
+    # thickness prior was withdrawn. This file was written while the prior was
+    # still live and carried it; left in place it would have made this axis
+    # differ from the control it claims to be.
 
 reference_point_utility: [-0.01, -0.01, -0.01]
 
