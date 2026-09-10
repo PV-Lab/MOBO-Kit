@@ -166,22 +166,26 @@ prior that earns its place; the live config declares none, and a test pins that.
 
 ## What is actually open
 
-1. **R2 is proposed and waiting for films.** R1 was proposed on 2026-09-07 at
-   seed 73 (hash `addc7edcabb0ac02`), run in triplicate, and came back on
-   2026-09-10. R2 was proposed the same day through the launcher path from commit
-   `2351ca0`: seed 73, qLogNEHVI on the R0 rows plus the five R1 condition means
-   with measured noise, hash **`97bbd2cb85bb50b7`**, reproduced by a second route,
-   on grid, every constraint met. Three conditions × 3 films:
+1. **R2 is proposed at seed 1 and waiting for films.** R1 was proposed on
+   2026-09-07 at seed 73 (hash `addc7edcabb0ac02`), run in triplicate, and came
+   back on 2026-09-10. For R2 the launcher path produced five options the same
+   day — seeds 1, 3, 17, 42 and 73, qLogNEHVI on the R0 rows plus the five R1
+   condition means with measured noise — and **the group chose seed 1** on
+   practical grounds. The worklist was regenerated at seed 1: hash
+   **`d596b43526765ea3`**, reproduced by a second route, on grid, every constraint
+   met. Three conditions × 3 films:
 
-   | | speed_1 | time_1 | speed_2 | time_2 | conc | vol | T anneal | t anneal | anti vol | anti time | predicted thickness |
+   | | speed_1 | time_1 | speed_2 | time_2 | conc | vol | T anneal | t anneal | anti vol | anti time | predicted thickness, recipe mean (68%) |
    |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-   | R2_C01 | 5500 | 30 | 1500 | 30 | 1.70 | 160 | 180 | 25 | 110 | 19 | 654 nm (592–716) |
-   | R2_C02 | 1000 | 10 | 4000 | 35 | 1.45 | 120 | 125 | 25 | 190 | 17 | 794 nm (750–839) |
-   | R2_C03 | 5500 | 10 | 2000 | 25 | 1.65 | 180 | 165 | 45 | 140 | 9 | 646 nm (575–716) |
+   | R2_C01 | 5500 | 20 | 1000 | 25 | 1.65 | 170 | 185 | 20 | 130 | 20 | 610 nm (556–665) |
+   | R2_C02 | 1000 | 15 | 3000 | 50 | 1.40 | 170 | 130 | 25 | 185 | 14 | 743 nm (687–799) |
+   | R2_C03 | 1000 | 20 | 5000 | 30 | 1.40 | 190 | 115 | 60 | 185 | 12 | 680 nm (635–724) |
 
-   With fitted noise instead of option C, the same seed gives `823fc41c73df4a57`,
-   which shares only R2_C02. Switching option C on is what moved the batch; the
-   fixes that came with it did not.
+   The five options, their manifest and a comparison workbook are in
+   `local_outputs/r2_seed_options/`; the seed-73 worklist, never filled in, is
+   archived there under `superseded_seed73/`. At seed 73, fitted noise instead of
+   option C would have shared only one condition with the option-C batch:
+   switching option C on moved the batch, and the fixes that came with it did not.
 2. **Option C is on for R2** (chosen 2026-09-06, switched on 2026-09-10): the GP
    gets each R1 condition's mean plus the between-film variance measured from its
    triplicates — `model.observation_noise: replicate_pooled` — rather than the 15
@@ -206,7 +210,11 @@ prior that earns its place; the live config declares none, and a test pins that.
    review of the fix itself (all low): the attribution figure explains the first 15
    observations, which for R2 are the R0 rows only; `_observations_by_round`
    swallows any error reading a round sheet, the new rule/link refusal included;
-   and no test yet drives `generate_round_report(observations=...)`.
+   and no test yet drives `generate_round_report(observations=...)`. And, predating
+   all of this: the Review sheet shows uniformity and optoelectronic predictions
+   with 68% intervals and no no-signal flag (only the report and the docs carry
+   it), and its `thickness_sd` column is the utility's sd, not nanometres. Its
+   thickness intervals are for the recipe's MEAN; a single film's is wider.
 4. **`anneal_temp` sits at a range edge in proposed conditions.** If the group
    would never anneal below some temperature, that belongs in `constraints:` —
    now a live list with three entries, so adding one is a two-line change.

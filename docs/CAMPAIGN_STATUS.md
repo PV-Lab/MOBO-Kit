@@ -130,12 +130,15 @@ yet evidence of learning. Optoelectronic is still nothing.
 The three figures behind these tables are in `local_outputs/r1_results/`, which is
 not in git.
 
-**R2 was proposed the same day**, from commit `2351ca0` with option C on (measured
-replicate noise; see HANDOFF for what switching it on required): seed 73, hash
-`97bbd2cb85bb50b7`. Two of the three conditions are predicted on the thickness
-target (654 and 646 nm); the third trades thickness (794 nm) for the highest
-predicted optoelectronic score of the three. The uniformity and optoelectronic
-predictions are exploration only.
+**R2 was proposed the same day**, with option C on (measured replicate noise; see
+HANDOFF for what switching it on required), as five seed options, and the group
+chose **seed 1** (hash `d596b43526765ea3`). All five options had the same shape —
+one or two fast-spin (5500 rpm), higher-concentration, hot-anneal recipes predicted
+at about 605–655 nm and one or two slow-spin recipes near 1.4 M predicted at about
+670–795 nm — so the seed changed the details, not the strategy. Seed 1's three
+conditions are predicted at 610, 743 and 680 nm; those ranges are 68% intervals for
+the recipe's mean, and a single film's is about ±60 nm. The uniformity and
+optoelectronic predictions are exploration only.
 
 ### What the final data supports
 
