@@ -1,0 +1,36 @@
+# The CPU-tested dependency stack. Keep these versions synchronized with the
+# ranges in pyproject.toml, which are deliberately wider: this file is what was
+# actually tested, pyproject is what is allowed.
+#
+# linear_operator is pinned although pyproject does not declare it -- it is a
+# gpytorch/botorch transitive dependency whose version affects fitted numbers, and
+# on this stack a second-decimal change in LOO R2 is inside the numerical floor
+# (see docs/GP_MODEL_DECISION.md). Pin it so a reproduction is a reproduction.
+#
+# shap is pinned for the same reason: scripts/plot_shap_attribution.py relies on
+# KernelExplainer enumerating ALL 2**10 coalitions at ten inputs, which is what
+# makes its attributions exact and reproducible rather than sampled. That sample
+# budget is a library default, not an API guarantee -- a version that changed it
+# would silently turn every attribution into an approximation, and nothing would
+# fail. The suite's additivity check would catch it; the pin is so it never gets
+# the chance on a fresh install.
+#
+# (docs/STEP1_HANDOFF.md, referenced here until 2026-07-30, was removed in the
+# cleanup commit 33f101f. docs/HANDOFF.md is the current entry point.)
+numpy==2.2.6
+pandas==2.3.1
+scikit-learn==1.7.1
+matplotlib==3.10.3
+seaborn==0.13.2
+PyYAML==6.0.2
+scipy==1.16.0
+torch==2.8.0
+gpytorch==1.14
+botorch==0.15.1
+linear_operator==0.6
+shap==0.48.0
+openpyxl==3.1.5
+Pillow==12.3.0
+pytest==8.4.1
+pytest-cov==6.2.1
+black==25.1.0

@@ -1,0 +1,187 @@
+# DIAGNOSTIC ONLY. The same campaign with the two failing COMPOSITE SCORES
+# replaced by RAW MEASUREMENTS, so the two can be compared figure for figure.
+#
+# THE QUESTION THIS ANSWERS. R1 and R2 were not improving on uniformity or
+# optoelectronic, and the leave-one-out parity plot showed the model learning
+# neither. Both are composites: uniformity is (Coverage + (1-Uniformity) +
+# Phase purity)/3, optoelectronic is a weighted blend of normalised Voc,
+# photoconductance and photosensitivity. So: is the COMBINATION the problem? Feed
+# the GP one raw measurement per axis instead and look at the same two figures.
+#
+# Everything else is held identical to `campaign_d2d_perovskite_final.yaml` -- the
+# same ten inputs and grids, the same constraints, the same beta = 4 / radius =
+# 0.25, the same seed, the same reference point, thickness untouched. ONLY the
+# first two objectives change. That is what makes the comparison a comparison.
+#
+# NOT A CAMPAIGN CONTRACT. It proposes nothing and nothing is written from it.
+# Its contract_version is distinct so no hypervolume from it can ever be compared
+# against a v4 number.
+campaign:
+  name: D2D_FA0.9Cs0.1PbI3_raw_components_diagnostic
+  status: diagnostic
+  schema_version: d2d-campaign-v4
+  workbook_profile: d2d_summary_final_v4
+  source_sheet: R0
+
+inputs:
+  - {name: speed_1,     unit: rpm, start: 1000, stop: 6000, step: 500}
+  - {name: time_1,      unit: s,   start: 5,    stop: 50,   step: 5}
+  - {name: speed_2,     unit: rpm, start: 0,    stop: 5000, step: 500}
+  - {name: time_2,      unit: s,   start: 0,    stop: 60,   step: 5}
+  - {name: precur_conc, unit: M,   start: 1.00, stop: 2.00, step: 0.05}
+  - {name: precur_vol,  unit: uL,  start: 40,   stop: 200,  step: 10}
+  - {name: anneal_temp, unit: C,   start: 100,  stop: 185,  step: 5}
+  - {name: anneal_time, unit: min, start: 10,   stop: 60,   step: 5}
+  - {name: anti_vol,    unit: uL,  start: 100,  stop: 200,  step: 5}
+  - {name: anti_time,   unit: s,   start: 9,    stop: 25,   step: 1}
+
+objectives:
+  contract_version: d2d-objectives-raw-components-diagnostic
+  scaling_mode: fixed_affine
+  specs:
+  # ---------------------------------------------------------------- axis 1 ----
+  # REPLACES the uniformity score. Phase purity is the only one of that score's
+  # three components with any claim to signal on its own: coverage is -0.6638,
+  # 1-Uniformity is -0.6119, phase purity is +0.0571, against the composite's
+  # -0.4688. It is also the component the composite gives the LEAST weight to in
+  # practice -- 1-Uniformity carries 81% of the composite's variance and phase
+  # purity 18%.
+  - name: phase_purity
+    model_source_column: "Phase purity"
+    transform: affine
+    goal: maximize
+    measurement:
+      recipe: stored
+      inputs:
+        - {column: "Phase purity"}
+    # A fraction. Observed span on the 15 rows: 0.6305 to 0.9827.
+    lower_anchor: 0.0
+    upper_anchor: 1.0
+    # +0.0571 plain. Above the -0.1480 that this project used to call the null,
+    # but that number is NOT a significance threshold (28.7% of pure-noise
+    # shuffles beat it) and phase purity's own empirical bar is +0.2309. With a
+    # precur_conc mean function it reaches +0.3244, which was refuted 3-0 on
+    # verification: the effect is three films below 1.25 M, and among the ten
+    # high-purity films the model ranks them BACKWARDS (rho -0.754).
+    signal_status: exploration_only
+
+  # ---------------------------------------------------------------- axis 2 ----
+  # REPLACES the optoelectronic score, with the group's own example: raw
+  # photoconductance, one measurement, no blending.
+  - name: photoconductance
+    # The workbook's own `=MIN(1, X2/(0.000001))` version of the SAME measurement.
+    #
+    # WHY NOT THE RAW SIEMENS COLUMN. Tried first, and the oracle fit COLLAPSED on
+    # it: at ~1e-7 the latent sd falls to 1.2e-4 of the fitted noise sd and the
+    # round simulation refuses to render rather than build every surface on a
+    # collapsed fit. That is numerical, not scientific -- dividing by the sheet's
+    # own 1e-6 is a strictly monotone rescale and the two carry identical
+    # information (LOO R2 -0.6308 raw against -0.6302 normalised, rank -0.243 in
+    # both). The lesson is worth keeping: `Standardize` does not make this
+    # pipeline scale-invariant in practice, so an objective living at 1e-7 needs
+    # rescaling before it can be modelled at all.
+    model_source_column: "Normalized photoconductance (test)"
+    transform: affine
+    goal: maximize
+    measurement:
+      recipe: stored
+      inputs:
+        - {column: "Normalized photoconductance (test)"}
+    # Capped at 1 by the sheet's own MIN. Observed span: 0.0339 to 0.6789.
+    lower_anchor: 0.0
+    upper_anchor: 1.0
+    # -0.6308 raw, -0.3254 in logs. Both far below even the old null, and below
+    # the MEDIAN of this axis's own permutation null. Worse than the composite it
+    # replaces (-0.7038 vs -0.6308 is inside the +-0.236 resolution, so call them
+    # equal). Splitting the optoelectronic score into its parts does not help,
+    # which is the finding.
+    signal_status: exploration_only
+
+  # ---------------------------------------------------------------- axis 3 ----
+  # UNCHANGED from v4, deliberately: it is the control. If the raw-component
+  # figures look different from the score figures on this axis, something other
+  # than the objective definition moved and the comparison is void.
+  - name: thickness
+    model_source_column: "Thickness (avg)"
+    transform: gaussian_target
+    goal: target
+    target: 650.0
+    sigma: 176.7766952966369
+    equivalent_workbook_formula: "EXP(-(((AH-650)/250)^2))"
+    signal_status: learnable
+    measurement:
+      recipe: mean_of_present
+      inputs:
+        - {column: "T1"}
+        - {column: "T2"}
+        - {column: "T3"}
+        - {column: "T4"}
+      excluded:
+        - {column: "T anom"}
+      cross_check:
+        - {column: "Thickness (avg)", atol: 1.0e-9}
+      spread_warning_ratio: 0.25
+    # Plain mean in nm and no mean function, both matching the live contract
+    # (the mean function was withdrawn 2026-09-06, the aggregation followed on
+    # 2026-09-10). This file was written while the prior was still live and
+    # carried both; left in place they would have made this axis differ from the
+    # control it claims to be.
+    replicate_aggregate: mean
+
+reference_point_utility: [-0.01, -0.01, -0.01]
+
+rounds:
+  r1:
+    method: ucb_hvi
+    batch_size: 5
+    replicates_per_condition: 3
+    beta: 4.0
+    candidate_pool_size: 32768
+    posterior_samples: 256
+    moment_method: monte_carlo
+  r2:
+    method: qlognehvi
+    batch_size: 3
+    replicates_per_condition: 3
+    candidate_pool_size: 32768
+    mc_samples: 128
+    sequential_pending: true
+
+constraints:
+  - zero_coupled: [speed_2, time_2]
+    name: second_stage_all_or_nothing
+  - sum_upper_strict: {lhs: anti_time, rhs: [time_1, time_2]}
+    name: antisolvent_lands_while_spinning
+  - nonzero_minimum: {column: time_2, minimum: 10}
+    name: second_stage_runs_at_least_10s
+
+review:
+  probes: []
+  notes:
+    - >
+      Diagnostic only. Two of three objectives are raw measurements substituted
+      for the composite scores the campaign runs, so that the leave-one-out
+      parity plot and the round-simulation boxplots can be compared side by side
+      against the score version. Nothing here proposes films.
+
+local_penalization:
+  distance_metric: normalized_euclidean
+  dimension_weights: null
+  radius: 0.25
+  min_batch_distance: 0.15
+  min_observed_distance: 0.0
+
+model:
+  variant: dim_scaled_prior
+  observation_noise: fit_from_marginal_likelihood
+  replicate_variance:
+    # Mirrors the live contract: the within-film variance of a film MEAN, in nm^2.
+    sanity_floor:
+      thickness: 91.2
+    rows_without_replicates: 1
+
+reproducibility:
+  seed: 73
+  record_git_commit: true
+  record_environment_versions: true
+  record_resolved_config_hash: true
