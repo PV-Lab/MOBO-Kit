@@ -1,6 +1,6 @@
 # Handoff
 
-Read this first in a new session. Updated 2026-09-10, when the R1 films came back.
+Read this first in a new session. Updated 2026-09-21, when the R2 films came back.
 
 ## What this repository is doing right now
 
@@ -118,6 +118,15 @@ Measured on v4's 15 rows by `intake_new_data.py`, against a leave-one-out null o
 | optoelectronic | **-0.7038** | none | below the null → **exploration only** |
 | thickness | **+0.5814** | **none — withdrawn 2026-09-06** | **learnable**, on its rank permutation |
 
+**R2 puts the thickness verdict back in question (2026-09-21).** On all 23
+recipes — R0's 15, R1's 5 and R2's 3, each replicated round entered as its mean
+with the pooled between-film variance — leave-one-recipe-out thickness R² is
+**+0.39** (rank +0.66), down from +0.78 at 20 recipes, because the two recipes the
+model mispredicted by 250–340 nm are now training data too. The rank permutation
+test has NOT been re-run at 23 recipes, and `permutation_rank_test.py` reads the
+source sheet only, so "learnable" is a verdict measured at 15 and 20 recipes.
+Details in open item 1.
+
 **No objective carries a physics prior any more.** The thickness mean function
 `log T ~ log(speed_1)+log(precur_conc)` was withdrawn on 2026-09-06: its
 justification was that the fitted speed exponent agreed with theory's -0.5, and
@@ -166,27 +175,63 @@ prior that earns its place; the live config declares none, and a test pins that.
 
 ## What is actually open
 
-1. **R2 is proposed at seed 1 and waiting for films.** R1 was proposed on
-   2026-09-07 at seed 73 (hash `addc7edcabb0ac02`), run in triplicate, and came
-   back on 2026-09-10. For R2 the launcher path produced five options the same
-   day — seeds 1, 3, 17, 42 and 73, qLogNEHVI on the R0 rows plus the five R1
+1. **R2 came back on 2026-09-21 and it contradicted the thickness model.** R1 was
+   proposed on 2026-09-07 at seed 73 (hash `addc7edcabb0ac02`), run in triplicate,
+   and came back on 2026-09-10. For R2 the launcher path produced five options the
+   same day — seeds 1, 3, 17, 42 and 73, qLogNEHVI on the R0 rows plus the five R1
    condition means with measured noise — and **the group chose seed 1** on
-   practical grounds. The worklist was regenerated at seed 1: hash
-   **`d596b43526765ea3`**, reproduced by a second route, on grid, every constraint
-   met. Three conditions × 3 films:
+   practical grounds (worklist hash **`d596b43526765ea3`**, reproduced by a second
+   route, on grid, every constraint met). Three conditions × 3 films:
 
-   | | speed_1 | time_1 | speed_2 | time_2 | conc | vol | T anneal | t anneal | anti vol | anti time | predicted thickness, recipe mean (68%) |
-   |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-   | R2_C01 | 5500 | 20 | 1000 | 25 | 1.65 | 170 | 185 | 20 | 130 | 20 | 610 nm (556–665) |
-   | R2_C02 | 1000 | 15 | 3000 | 50 | 1.40 | 170 | 130 | 25 | 185 | 14 | 743 nm (687–799) |
-   | R2_C03 | 1000 | 20 | 5000 | 30 | 1.40 | 190 | 115 | 60 | 185 | 12 | 680 nm (635–724) |
+   | | speed_1 | time_1 | speed_2 | time_2 | conc | vol | T anneal | t anneal | anti vol | anti time | predicted mean (68%) | **measured mean of 3** |
+   |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+   | R2_C01 | 5500 | 20 | 1000 | 25 | 1.65 | 170 | 185 | 20 | 130 | 20 | 610 nm (556–665) | **953 nm** |
+   | R2_C02 | 1000 | 15 | 3000 | 50 | 1.40 | 170 | 130 | 25 | 185 | 14 | 743 nm (687–799) | **992 nm** |
+   | R2_C03 | 1000 | 20 | 5000 | 30 | 1.40 | 190 | 115 | 60 | 185 | 12 | 680 nm (635–724) | **701 nm** |
 
-   The five options, their manifest and a comparison workbook are in
-   `local_outputs/r2_seed_options/`; the seed-73 worklist, never filled in, is
-   archived there under `superseded_seed73/`. At seed 73, fitted noise instead of
-   option C would have shared only one condition with the option-C batch:
-   switching option C on moved the batch, and the fixes that came with it did not.
-2. **Option C is on for R2** (chosen 2026-09-06, switched on 2026-09-10): the GP
+   Two of the three are outside the model's 95% interval, by **+6.1 and +4.3 sd**
+   of a three-film mean; a refit of the proposing model reproduces the Review
+   sheet's predictions exactly, so this is the model's own error and not a
+   bookkeeping one. **Leave-one-recipe-out thickness R² falls +0.78 (20 recipes) →
+   +0.39 (23)**, rank +0.92 → +0.66, typical error 112 → 185 nm. Uniformity −0.30
+   and optoelectronic −0.12 (whose fit collapses to pure noise on 3 of 23 folds)
+   are still unlearnable. **Hypervolume has not moved for three rounds: 0.632.**
+   The R2 recipes were not further from measured recipes than R1's were
+   (normalised nearest neighbour 0.57–0.64 against R1's 0.75–1.05), so distance
+   does not explain the miss.
+
+   The lab also ran **3 control films** (the same recipe as R0 film 1) and **2
+   hand-tuned films** (R1_C05 with `precur_conc` 1.25 → 1.35 M, `anneal_time`
+   10 → 40 min, `anti_time` 10 → 12 s). The control is this campaign's first
+   same-recipe repeat across sessions: +56 nm thickness (+1.8 sd, p = 0.072),
+   −0.092 uniformity (−2.1 sd, p = 0.034), −0.103 optoelectronic (−1.4 sd) against
+   the R0 film. The uniformity drop is a genuine session effect — that recipe
+   scored 0.877 / 0.883 / 0.867 in three earlier sessions, so 0.785 is below every
+   earlier make of it. The thickness offset is NOT established: one earlier film,
+   p = 0.072, and the control's median sits on the campaign median. Even taken at
+   face value, 56 nm is a sixth of the 342 nm miss.
+
+   The filled worklist is `local_inputs/Final Summary Table_R2_Candidates.xlsx`
+   (sha `864db6c351dc9e8f`); the unfilled seed-1 worklist and the first, partial
+   return (no thickness, control `anti_vol` mis-entered as 185) are kept in
+   `local_inputs/superseded_r2/`. Figures and numbers:
+   `local_outputs/r2_results/` (four-panel box plots, `FINDINGS.md`,
+   `r2_findings.csv`) and `local_outputs/deck/bare/02_learning.png` and
+   `03_prospective.png`. The five seed options and their manifest remain in
+   `local_outputs/r2_seed_options/`, the seed-73 worklist under
+   `superseded_seed73/`.
+2. **The R2 sheet is not machine-readable, and there is no R3 path.**
+   `read_candidate_results(..., "R2")` raises `CandidateSheetError` — "The films of
+   None do not share the same speed_1" — because the five control and hand-tuned
+   rows carry no `replicate_group`; they need to move to their own sheet, or to be
+   labelled, which would make them design points (a modelling decision). Even with
+   a clean sheet `detect_round` answers "R1 and R2 are both complete. The campaign
+   is finished": `detect_round` loops only (R1, R2), `gather_observations` reads
+   candidate results only when `for_round == "R2"`, the runner picks UCB for R1 and
+   qLogNEHVI otherwise with `round_name` hard-coded, and the config declares only
+   `rounds.r1` and `rounds.r2`. **Adding R3 is a design change — confirm before
+   starting it.**
+3. **Option C is on for R2** (chosen 2026-09-06, switched on 2026-09-10): the GP
    gets each R1 condition's mean plus the between-film variance measured from its
    triplicates — `model.observation_noise: replicate_pooled` — rather than the 15
    raw rows, which carry the same information. It pools ONE variance per objective
@@ -202,7 +247,7 @@ prior that earns its place; the live config declares none, and a test pins that.
    and `replicate_aggregates` plus a post-fit check now refuse a variance in the
    wrong units. None of it changes which conditions R2 proposes; it changes what
    the Review sheet and the figures say about them.
-3. **Left open from that audit (medium, none affects the batch).** The R1 sheet's
+4. **Left open from that audit (medium, none affects the batch).** The R1 sheet's
    own notes — five readings set aside in `T anom` — do not reach the R2 Review
    sheet, which lists R0's notes only. A floor warning, when one fires, lands only
    in the Review's "Trained on" cell rather than above the numbers. The data-only
@@ -215,7 +260,7 @@ prior that earns its place; the live config declares none, and a test pins that.
    with 68% intervals and no no-signal flag (only the report and the docs carry
    it), and its `thickness_sd` column is the utility's sd, not nanometres. Its
    thickness intervals are for the recipe's MEAN; a single film's is wider.
-4. **`anneal_temp` sits at a range edge in proposed conditions.** If the group
+5. **`anneal_temp` sits at a range edge in proposed conditions.** If the group
    would never anneal below some temperature, that belongs in `constraints:` —
    now a live list with three entries, so adding one is a two-line change.
 

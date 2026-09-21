@@ -140,6 +140,123 @@ conditions are predicted at 610, 743 and 680 nm; those ranges are 68% intervals 
 the recipe's mean, and a single film's is about ±60 nm. The uniformity and
 optoelectronic predictions are exploration only.
 
+### R2 came back (2026-09-21), and the thickness model missed
+
+R2 was proposed at seed 1 (hash `d596b43526765ea3`) and made in triplicate: 3
+recipes × 3 films, every recipe exactly as proposed. A first, partial return on
+2026-09-14 carried the two scores but no thickness, and mis-entered the control
+recipe's `anti_vol` as 185; both are fixed in the completed file. The superseded
+copies are kept in `local_inputs/superseded_r2/`.
+
+**The prospective test, which is the one the model could not game:**
+
+| | predicted mean (68%) | measured mean of 3 films | miss |
+|---|---:|---:|---:|
+| R2_C01 | 610 nm (556–665) | **953 nm** | +342 nm, **+6.1 sd** |
+| R2_C02 | 743 nm (687–799) | **992 nm** | +249 nm, **+4.3 sd** |
+| R2_C03 | 680 nm (635–724) | 701 nm | +22 nm, +0.5 sd |
+
+Refitting the proposing model (R0 + R1, option C, seed 73) reproduces the Review
+sheet's stored predictions bit for bit, which confirms the sheet was not edited —
+same code, same seed, so it is a reproduction, not independent corroboration. On R1
+the same test put 5 of 5 inside ±2 sd; on R2 it is 1 of 3. The sd here is the
+model's own predictive spread for a three-film mean (56, 57 and 46 nm), not the
+scatter of the three films.
+
+The two dead axes moved the same way: **all three recipes came back below the
+model's uniformity prediction** (z −2.44, −1.86, −1.08; R2_C01 outside its 95%
+range) and slightly below on optoelectronic (−0.27, −0.16, −0.24). The control
+films shifted the same way in the same session, so part of this is the session
+rather than the model.
+
+**What the films measured**, by round (Kruskal–Wallis across the three rounds):
+
+| | R0 median | R1 median | R2 median | p |
+|---|---:|---:|---:|---:|
+| uniformity score | 0.788 | 0.775 | 0.716 | 0.21 |
+| optoelectronic score | 0.552 | 0.557 | 0.624 | 0.35 |
+| thickness (nm) | 651 | 473 | 958 | <0.005 |
+| thickness score | 0.633 | 0.605 | 0.218 | 0.30 |
+
+R2 has the lowest median thickness score of any round: the optimiser aimed at
+650 nm and the six films of the two missed recipes came back at 927–1034 nm
+(R2_C03's three, at 679–721 nm, are the round's only ones near target). With nine
+films that round difference is not significant **on the score** (Kruskal–Wallis
+p = 0.30); **in nanometres it is** (p = 0.002). Hypervolume has not moved for three
+rounds: **0.632 after R0, after R1 and after R2**, with the front still four R0
+films (samples 1, 4, 5 and 10).
+
+**Leave-one-recipe-out, 20 → 23 recipes** (R2 entered as recipe means with the
+pooled between-film variance, which now includes R2's own triplicates):
+
+| | 15 | 20 | 23 recipes |
+|---|---:|---:|---:|
+| uniformity | −0.469 | +0.026 | −0.296 |
+| optoelectronic | −0.704 | −0.547 | −0.117 (fit collapses to pure noise on 3 of 23 folds) |
+| thickness | +0.581 (rank +0.804) | **+0.781** (rank +0.917) | **+0.391** (rank +0.662), typical error 112 → 185 nm |
+
+Read the two dead rows with care: the noise treatment changes across the row. The
+15-recipe column is fitted without observation noise, the 20-recipe column with the
+variance pooled from R1's triplicates, and the 23-recipe column with a pool that
+includes R2's. On thickness that is worth under 0.001 R²; on optoelectronic it is
+worth about 0.18 (holding the pool at R1-only, 23 recipes scores −0.300 rather than
+−0.117), because its pooled variance quadruples once R2 is in. No verdict changes:
+every value stays below zero.
+
+**Why the miss is not "the model extrapolated".** The R2 recipes sat CLOSER to
+already-measured recipes than R1's did: normalised nearest-neighbour distance
+0.57–0.64 against R1's 0.75–1.05, with the median R0-to-R0 nearest neighbour at
+1.07 (on the GP's own ARD-scaled metric the gap is wider still, 0.15–0.29 against
+0.45–0.68). Nor is it only that three hard points entered the average: inside the
+23-recipe leave-one-out, **the original 20 recipes alone now score +0.514 with a
+167 nm error**, against +0.781 and 112 nm before R2 — the R2 films changed the
+model's fit everywhere.
+
+**No input pattern separates the two misses from the hit.** Across the 23 recipes
+thickness tracks `precur_conc` strongly (Spearman +0.82, p = 1.5e-6); neither spin
+speed correlates on its own, but that is confounding rather than irrelevance —
+holding concentration fixed, `speed_1` is significant (partial rank −0.58,
+p = 0.004; OLS `log T ~ 1.59 log(conc) − 0.174 log(speed_1)`, R² 0.80, t = −3.3).
+That does not explain R2: **R2_C02, missed by 249 nm, and R2_C03, predicted
+correctly, share the same 1.40 M and the same 1000 rpm** and differ only in the
+other seven settings. R0 film 1, also 1.40 M and 1000 rpm, measured 634 nm against
+R2_C02's 992 nm. Only R2_C01 (1.65 M, 5500 rpm) fits a concentration story.
+
+**The control films are this campaign's first same-recipe repeat across sessions.**
+The lab made 3 films of R0 recipe 1 alongside R2 (and 2 hand-tuned films: R1_C05
+with `precur_conc` 1.25 → 1.35 M, `anneal_time` 10 → 40 min, `anti_time` 10 →
+12 s). Against that recipe as measured in the earlier session:
+
+| | R0 film 1 | control, this session (3 films) | difference |
+|---|---:|---:|---:|
+| uniformity | 0.877 | 0.785 | −0.092 (−2.1 sd, p = 0.034) |
+| optoelectronic | 0.690 | 0.587 | −0.103 (−1.4 sd, p = 0.15) |
+| thickness | 634 nm | 689 nm | +56 nm (+1.8 sd, p = 0.072) |
+
+The sd here is of the difference between one film and a three-film mean
+(film-to-film sd × √(1+⅓), pooled over R1 and R2).
+
+**The uniformity drop is a session effect; the thickness offset is not
+established.** That recipe scored uniformity 0.877 / 0.883 / 0.867 in the three
+earlier sessions of the extended sheet, so this session's 0.785 sits below every
+earlier make of it, while whole-sheet session means moved only 0.770 / 0.773 /
+0.793. The thickness offset rests on a single earlier film and p = 0.072, and the
+control's median (692 nm) sits on the campaign median (694 nm); at face value 56 nm
+is 16–22% of the 342 and 249 nm misses, so even if real it does not explain them.
+The optoelectronic yardstick is fragile: −1.4 sd against the R1+R2 pool, −3.0 sd
+against R1 alone, because R2's optoelectronic scatter is inflated by the one film
+with no photoconductance entered.
+
+Figures and numbers: `local_outputs/r2_results/` (four-panel box plots for R0 / R1
+/ R2, a second figure adding the control and hand-tuned films, `FINDINGS.md`,
+`r2_films.csv`, `r2_findings.csv`) and `local_outputs/deck/bare/02_learning.png`
+and `03_prospective.png`. None of it is in git.
+
+**The sheet is not machine-readable yet**: the 5 control and hand-tuned rows have
+no `replicate_group`, so `read_candidate_results` refuses the file, and
+`detect_round` reports the campaign finished because no R3 exists in the code. See
+HANDOFF open item 2.
+
 ### What the final data supports
 
 `scripts/intake_new_data.py`, exact leave-one-out, null −0.1480 at N=15,
