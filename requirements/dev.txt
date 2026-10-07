@@ -1,0 +1,4 @@
+# From the repository root:
+#   python -m pip install -r requirements/dev.txt
+-c constraints.txt
+-e .[dev]

@@ -1,0 +1,431 @@
+# D2D FINAL campaign - FA0.9Cs0.1PbI3 slot-die/spin. THE REAL RUN.
+#
+# Rounds: R0 (15 measured, complete) -> R1 UCB-HVI (5 conditions) -> R2 qLogNEHVI (3).
+# Each proposed condition is run in triplicate.
+#
+# THREE CONTRACTS HAVE EXISTED. Naming them is not bookkeeping -- utility space is
+# what hypervolume is measured in, and an objective that keeps its name while
+# changing its construction makes every cross-contract number incomparable while
+# every plot still renders.
+#
+#   v2  d2d-objectives-v2-nm-thickness  ALGORITHM TESTING. Proved the loop worked.
+#   v3  d2d-objectives-v3-test          DRY RUN on test data. Rehearsed this
+#                                       contract's shape; the workbook was
+#                                       literally called "Test".
+#   v4  d2d-objectives-v4-final         THIS ONE. The campaign that produces films.
+#
+# Nothing from v2 or v3 transfers. Their fitted numbers are about quantities that
+# have been redefined twice.
+#
+# The workbook is local_inputs/Final Summary Table.xlsx (gitignored). Its columns
+# moved again: the three scores are now AJ / AK / AL, and the thickness readings
+# are AC..AF with AG holding the operator's anomalies.
+campaign:
+  name: D2D_FA0.9Cs0.1PbI3_final
+  status: active
+  schema_version: d2d-campaign-v4
+  workbook_profile: d2d_summary_final_v4
+  # NEW KEY. The workbook names its sheets by round now, so the sheet holding the
+  # measured rows is campaign configuration rather than the hard-coded "Sheet1"
+  # every earlier contract assumed.
+  #
+  # The workbook also carries an `R1` sheet. IT IS DELIBERATELY NOT READ. The
+  # round contract is unchanged: each round's worklist is written to a NEW file
+  # beside the workbook and filled in there, and the source workbook is never
+  # opened for writing. That sheet is the group's own template and the tool
+  # ignores it.
+  source_sheet: R0
+
+# Ten inputs, columns B..K of the R0 sheet, in this order. GRIDS UNCHANGED from
+# v3 -- verified, all 15 measured rows land on them.
+inputs:
+  - name: speed_1
+    unit: rpm
+    start: 1000
+    stop: 6000
+    step: 500
+  - name: time_1
+    unit: s
+    start: 5
+    stop: 50
+    step: 5
+  - name: speed_2
+    unit: rpm
+    start: 0
+    stop: 5000
+    step: 500
+  - name: time_2
+    unit: s
+    start: 0
+    stop: 60
+    step: 5
+  - name: precur_conc
+    unit: M
+    start: 1.00
+    stop: 2.00
+    step: 0.05
+  - name: precur_vol
+    unit: uL
+    start: 40
+    stop: 200
+    step: 10
+  - name: anneal_temp
+    unit: C
+    start: 100
+    stop: 185
+    step: 5
+  - name: anneal_time
+    unit: min
+    start: 10
+    stop: 60
+    step: 5
+  - name: anti_vol
+    unit: uL
+    start: 100
+    stop: 200
+    step: 5
+  - name: anti_time
+    unit: s
+    start: 9
+    stop: 25
+    step: 1
+
+# UNIFORMITY AND OPTOELECTRONIC ARE READ AS STORED. The workbook's score column
+# IS the objective value.
+#
+# HOW THOSE SCORES ARE CONSTRUCTED IS NOT RECORDED HERE, BY DECISION.
+#
+# The SCORE VALUE is the interface. How a composite is defined -- which terms,
+# what weighting, which normalisation -- is a choice this group makes for itself,
+# and another group running MOBO-Kit on the same chemistry may define uniformity
+# completely differently and be equally right. What is shared is the contract's
+# SHAPE: one number per objective per film, on a declared scale. Encoding this
+# group's particular arithmetic in the tool would make the tool quietly specific
+# to us. It also gave the definition a second place to live and go stale, which
+# happened three times.
+#
+# WHAT THIS COSTS: no independent recomputation, so a stale pasted literal in
+# either column cannot be caught by comparing it against anything. That is the
+# price of the freeze and it is paid deliberately. The `formula_fingerprint` below
+# is the partial replacement and is NOT documentation -- it is a runtime alarm
+# that fires when the column's formula TEXT changes, which is the event that makes
+# hypervolume incomparable across rounds. It records what the formula was so that
+# a change is audible; it does not claim to explain it.
+#
+# Thickness is the exception and is COMPUTED, because the recomputation is what
+# lets an anomalous `T anom` reading be excluded AND NAMED, and because the model
+# trains on nanometres rather than on the stored score.
+objectives:
+  contract_version: d2d-objectives-v4-final-nomean
+  scaling_mode: fixed_affine
+  specs:
+  - name: uniformity
+    model_source_column: "Uniformity score (Avg (Coverage + (1-Uniformity) + Phase purity))"
+    transform: affine
+    goal: maximize
+    # Read, never recomputed.
+    measurement:
+      recipe: stored
+      inputs:
+        - {column: "Uniformity score (Avg (Coverage + (1-Uniformity) + Phase purity))"}
+      # A runtime alarm, not documentation: it fires if this column's formula
+      # text changes, because that is the event that silently redefines the
+      # objective and makes hypervolume incomparable across rounds.
+      formula_fingerprint:
+        column: "Uniformity score (Avg (Coverage + (1-Uniformity) + Phase purity))"
+        formula: "=(L2+O2+P2)/3"
+    # The score is a fraction, so [0, 1] is its range rather than a guess.
+    # Observed span on the 15 rows: 0.599 to 0.882.
+    lower_anchor: 0.0
+    upper_anchor: 1.0
+    # MEASURED ON THESE ROWS. Plain GP LOO R2 -0.4688 against a null of -0.1480:
+    # no learnable signal, for the third contract running. R1 is
+    # exploration-dominated for this objective by design.
+    #
+    # The workbook was revised on 2026-09-03: `Phase purity` moved on samples 4
+    # and 12 (0.7951 -> 0.7997 and 0.7800 -> 0.7882), which moves this column
+    # through `=(L+O+P)/3`. The number was -0.4778 on the previous copy. Nothing
+    # else on the sheet changed, and no verdict moved: the shift is 0.0090
+    # against a resolution sd of 0.236.
+    signal_status: exploration_only
+
+  - name: optoelectronic
+    model_source_column: "Optoelectronic score (Normalized (Voc + (0.75*Photoconductance + 0.25*Photosensitivity))/2"
+    transform: affine
+    goal: maximize
+    # Read, never recomputed.
+    #
+    # The agreement check below stays because it caught a real defect once: on the
+    # v3 workbook the normalised photoconductance column ranked BACKWARDS against
+    # its own raw measurement (Spearman -0.5484, p = 0.0343). It is +1.0000 here.
+    # The check is cheap and the failure it watches for is silent when it recurs.
+    measurement:
+      recipe: stored
+      inputs:
+        - {column: "Optoelectronic score (Normalized (Voc + (0.75*Photoconductance + 0.25*Photosensitivity))/2"}
+      formula_fingerprint:
+        column: "Optoelectronic score (Normalized (Voc + (0.75*Photoconductance + 0.25*Photosensitivity))/2"
+        formula: "=(S2+((0.75*Y2)+(0.25*AB2)))/2"
+      agreement_check:
+        raw: "Photoconductance (Max - based on raw slopes)"
+        normalized: "Normalized photoconductance (test)"
+        min_spearman: 0.0
+    # The score is a fraction, so [0, 1] is its range rather than a guess.
+    # Observed span on the 15 rows: 0.477 to 0.762.
+    lower_anchor: 0.0
+    upper_anchor: 1.0
+    # MEASURED ON THESE ROWS, 2026-09-02. Plain GP LOO R2 -0.7038 against a null
+    # of -0.1480 -- further below it than on v3 (-0.5842), even though the
+    # photoconductance inversion that made v3's version suspect is fixed. The
+    # renormalisation did not make this axis learnable, and no mean function is
+    # declared: the first campaign's anneal_temp trend was deleted on v3's intake
+    # verdict and nothing since has argued for reinstating it.
+    signal_status: exploration_only
+
+  - name: thickness
+    # trains on nanometres, NOT on the workbook thickness score
+    model_source_column: "Thickness (avg)"
+    transform: gaussian_target
+    goal: target
+    target: 650.0
+    # the workbook writes EXP(-(((AH-650)/250)^2)), which has no factor of 1/2;
+    # in the exp(-0.5*((T-c)/sigma)^2) convention used here that is 250/sqrt(2)
+    sigma: 176.7766952966369
+    equivalent_workbook_formula: "EXP(-(((AH-650)/250)^2))"
+    # The only objective with signal, for the third contract running: plain GP
+    # +0.5814.
+    #
+    # NOTE THAT -0.1480 IS NOT THE BAR. See "The leave-one-out null was never a
+    # significance threshold" in docs/CAMPAIGN_STATUS.md -- 28.7% of pure-noise
+    # shuffles beat it. This axis earns `learnable` on its RANK PERMUTATION TEST,
+    # which was always the right instrument and is now the only one.
+    #
+    # RE-MEASURED 2026-09-06 on the PLAIN GP, after the mean function was
+    # withdrawn, because the earlier verdict was measured with it:
+    #
+    #   observed rank rho  +0.8036
+    #   null mean          -0.1762  (sd 0.4070)
+    #   null 95th pct      +0.5607   <- the honest single-candidate bar
+    #   exceedances        9 of 1800
+    #   p                  0.0056   95% CI [0.0021, 0.0090]
+    #
+    # Identical p to the structured version's, and the observed rank clears the
+    # null's own 95th percentile by 0.24. Removing the prior cost R2, not the
+    # verdict.
+    signal_status: learnable
+    # NOT frozen, and the only objective still computed in Python. Its definition
+    # has been stable across all three contracts and the recomputation earns its
+    # place: it is what lets `T anom` be excluded from the mean and reported
+    # rather than silently dropped.
+    #
+    # The readings moved to AC..AF and the anomaly column to AG. Rows carry three
+    # or four readings, so `mean_of_present` is what the data needs.
+    #
+    # `Thickness (avg)` is a live unrounded AVERAGE, so anything above
+    # floating-point noise is a real disagreement -- hence the tight tolerance.
+    measurement:
+      recipe: mean_of_present
+      inputs:
+        - {column: "T1"}
+        - {column: "T2"}
+        - {column: "T3"}
+        - {column: "T4"}
+      excluded:
+        - {column: "T anom"}
+      cross_check:
+        - {column: "Thickness (avg)", atol: 1.0e-9}
+      spread_warning_ratio: 0.25
+    # PLAIN MEAN, in nanometres -- changed from mean_of_log on 2026-09-10.
+    #
+    # The replicate rule must match the space the GP trains in. mean_of_log (the
+    # geometric mean, with the replicate sd taken on log values) was right while
+    # the mean function below declared `response: log` and the model learned
+    # log T. When that prior was withdrawn on 2026-09-06 the model moved to
+    # nanometres and this key did not. With measured noise switched on, the pooled
+    # variance of log T (0.0019) then reached the nm model as nm^2 -- a noise sd
+    # of a fraction of a nanometre against a measured 26 nm -- and nothing
+    # errored. The means themselves move by at most 1 nm. A mismatch between this
+    # key and the model's link is now refused.
+    replicate_aggregate: mean
+    # NO MEAN FUNCTION. Withdrawn 2026-09-06 by the group's decision, after the
+    # physics justification failed its one clean test.
+    #
+    # What was here: `log T ~ log(speed_1) + log(precur_conc)`, declared from
+    # spin-coating theory and carried unchanged through all three contracts. It
+    # measured +0.7423 against the plain GP's +0.5823.
+    #
+    # WHY IT WENT. The supporting claim was that the fitted speed exponent agreed
+    # with Meyerhofer's `T ~ omega^-0.5`. It does not. OLS on the 15 films gives
+    # the exponent as -0.2554 with a standard error of 0.0593, a 95% interval of
+    # [-0.385, -0.126] -- the textbook -0.5 sits OUTSIDE it, 4.1 standard errors
+    # away. Fixing the exponents at their theoretical values (-0.5 and +1.0) and
+    # fitting only an intercept scores +0.5600, WORSE than having no trend at all.
+    # So the theory does not predict these films; the concentration exponent
+    # (+1.313, CI [0.932, 1.694]) does contain the mass-balance +1.0, which is
+    # consistent with the antisolvent quench freezing the film before viscous
+    # thinning completes.
+    #
+    # WHAT WAS TRUE, and is worth recording because it is the argument for ever
+    # bringing this back: the VARIABLE choice was real even though the magnitudes
+    # were not physics. Four matched-flexibility control pairs -- three fitted
+    # parameters each, physically unmotivated -- scored +0.3706, +0.2960, +0.3174
+    # and +0.4033, all BELOW the plain GP. It is not the case that any fitted
+    # two-term trend helps; most actively hurt.
+    #
+    # THE COST, stated plainly: thickness LOO R2 falls from +0.7423 to +0.5823 and
+    # rank from +0.864 to +0.804. It remains the only objective with signal and it
+    # still clears its rank permutation test. The gain never had a permutation test
+    # of its own, only an R2 comparison, which this project now knows is the weaker
+    # instrument.
+    #
+    # `structured_mean.py` stays in the package, wired and tested, for a future
+    # prior that earns its place. Reproduce the numbers above with:
+    #   python scripts/raw_component_screen.py --candidates thickness_nm
+
+# Reference point in UTILITY space, carried over verbatim. All three objectives
+# live natively in [0, 1], so no axis dominates.
+reference_point_utility: [-0.01, -0.01, -0.01]
+
+rounds:
+  r1:
+    method: ucb_hvi
+    batch_size: 5
+    replicates_per_condition: 3
+    # LOWERED from 36 to 4 on 2026-09-03, by the group's decision.
+    #
+    # 36 was chosen for the v3 dry run on the argument that two of three
+    # objectives carried no learnable signal, so heavy exploration was the right
+    # posture. That argument has been overtaken. On the extended C1&C2 sheet the
+    # two dead axes are dead for reasons beta cannot address: the optoelectronic
+    # score is 84.5% between-campaign drift (recipe ICC 0.000, and the GP refuses
+    # to fit it at all), and uniformity is reproducible (ICC 0.730) but not
+    # predictable from ten inputs at fifteen distinct recipes. Exploring harder
+    # buys nothing against either, and it costs real batch quality.
+    #
+    # What it costs, measured on this workbook at seed 73 (scripts in
+    # docs/, reproduced by the beta scan):
+    #
+    #   beta  radius   HV gain   edge coords/50   spacing   sd ratio
+    #      4    0.25   +0.0009               11     0.781      5.8x
+    #      9    0.25   +0.0000               15     0.882      6.2x
+    #     36    0.25   +0.0000               18     1.213      6.5x
+    #
+    # `edge coords` counts how many of the 5 x 10 proposed coordinates are pinned
+    # to a grid bound. At 36 the acquisition spends the batch on the corners of
+    # the box; at 4 it proposes films that sit inside it. beta = 4 is also the
+    # value the original 108-cell box-plot/heat-map sweep settled on before v3's
+    # no-signal verdict overrode it.
+    #
+    # STILL A DECLARED POLICY, NOT A MEASURED OPTIMUM. The +0.0009 HV gain is far
+    # below the trial sd of 0.010-0.027 that sweep measured; it is a tiebreak, not
+    # evidence. What IS evidence is the edge count and the spacing, which are
+    # facts about the batch at a fixed seed rather than single-seed hypervolume.
+    beta: 4.0
+    candidate_pool_size: 32768
+    posterior_samples: 256
+    moment_method: monte_carlo
+  r2:
+    method: qlognehvi
+    batch_size: 3
+    replicates_per_condition: 3
+    candidate_pool_size: 32768
+    mc_samples: 128
+    sequential_pending: true
+
+# Carried over verbatim from v3. All 15 measured rows satisfy all three -- sample
+# 2 was `speed_2 = 0, time_2 = 60` in an earlier draft of this workbook, which
+# breaks the first rule; the group corrected it to `time_2 = 0`.
+constraints:
+  - zero_coupled: [speed_2, time_2]
+    name: second_stage_all_or_nothing
+  - sum_upper_strict: {lhs: anti_time, rhs: [time_1, time_2]}
+    name: antisolvent_lands_while_spinning
+  - nonzero_minimum: {column: time_2, minimum: 10}
+    name: second_stage_runs_at_least_10s
+
+review:
+  probes: []
+
+  notes:
+    - >
+      Uniformity and optoelectronic are read from the workbook as stored. A stale
+      pasted value in either column would not be caught by anything here; the
+      formula fingerprints catch a changed definition, not a value that has
+      stopped tracking its inputs.
+
+local_penalization:
+  distance_metric: normalized_euclidean
+  dimension_weights: null
+  # 0.35 -> 0.25 on 2026-09-03, together with beta.
+  #
+  # THIS KNOB WAS INERT AND NOW IS NOT, which is the whole reason to set it
+  # deliberately. At beta = 36 the scan returns bit-identical batches at radius
+  # 0.15, 0.25 and 0.35 -- same spacing 1.213, same 18 edge coordinates, same
+  # utilities -- because the acquisition was already spreading the batch further
+  # than any of those radii asked for. At beta = 4 it bites:
+  #
+  #   radius   spacing   edge coords/50
+  #     0.15     0.682               13
+  #     0.25     0.781               11
+  #     0.35     0.941               13
+  #
+  # 0.25 is the cell with the fewest coordinates pinned to a grid bound. That is a
+  # weak reason on its own -- 11 against 13 at one seed -- but it is the only
+  # discriminating measurement available, and the alternative is inheriting a
+  # number chosen while the knob did nothing.
+  radius: 0.25
+  min_batch_distance: 0.15
+  min_observed_distance: 0.0
+
+model:
+  variant: dim_scaled_prior
+  # MEASURED NOISE ("option C"), switched on 2026-09-10 when the R1 triplicates
+  # came back; the group chose it on 2026-09-06. Each R1 condition enters the GP
+  # as the mean of its films, with ONE between-film variance per objective pooled
+  # across the conditions (a per-condition variance would rest on 2 dof), divided
+  # by the number of films in that row. It is not "one key": it also needs every
+  # replicate_aggregate to match its model's space (thickness: `mean`, in nm),
+  # which is now enforced, and a floor in the same units (below).
+  #
+  # Measured on the R1 triplicates (5 conditions x 3 films, 10 dof each), against
+  # the noise the model fitted for itself on the same 20 observations:
+  #   uniformity       sd 0.0443     (fitted 0.0062)
+  #   optoelectronic   sd 0.0294     (fitted 0.0058)
+  #   thickness        sd 25.7 nm    (fitted 17.3 nm)
+  # On the two score axes the fitted noise was 5-7x too small, so the model was
+  # crediting film-to-film scatter to the recipe.
+  observation_noise: replicate_pooled
+
+  replicate_variance:
+    # TWO DIFFERENT VARIANCES. Do not substitute one for the other.
+    #
+    # BETWEEN-FILM is what train_Yvar needs: the scatter of film MEANS across films
+    # made from the same recipe, pooled over the R1 triplicates. For thickness it
+    # is 662.7 nm^2 (sd 25.7 nm, 10 dof).
+    #
+    # WITHIN-FILM is the scatter of the 3-4 thickness points across one film. It
+    # contains no run-to-run variation, so it sets a FLOOR -- but only once it is
+    # in the same units as the between-film number: the variance of a film MEAN,
+    # the per-reading variance divided by the readings per film. On the R1 films
+    # that is 282.99 nm^2 per reading (32 dof) x mean(1/n) 0.3222 = 91.2 nm^2
+    # (sd 9.5 nm). The between-film 662.7 clears it by 7x.
+    #
+    # THE OLD FLOOR WAS WRONG TWICE OVER. 0.003007 was the variance of ONE log(T)
+    # reading on the R0 films: log units for a model that trains in nm, and a
+    # single reading compared against a mean of about three. On the first real
+    # triplicates it fired a false alarm (0.0019 "below" 0.003007).
+    sanity_floor:
+      thickness: 91.2
+    # Each R0 row is a single film, so it takes the whole pooled variance. That
+    # assumes R0 and R1 films are equally reproducible, and the data say the R0
+    # films were less even across the film (41.9 nm per reading against 16.8 nm on
+    # R1), so the R0 rows' thickness noise is understated: a like-for-like value
+    # would be about 1100 nm^2 against the 662.7 used. Checked in the pre-R2 audit:
+    # giving R0 rows 1097.6 nm^2 leaves the R2 batch unchanged, 3 conditions of 3.
+    rows_without_replicates: 1
+
+reproducibility:
+  seed: 73
+  record_git_commit: true
+  record_environment_versions: true
+  record_resolved_config_hash: true

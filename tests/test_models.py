@@ -1,264 +1,89 @@
-import sys
-import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+"""CPU-fast regression tests for the active GP model helpers."""
 
-import yaml
-import torch
+from __future__ import annotations
+
 import numpy as np
-import pandas as pd
-from src.design import build_design_from_config
-from src.utils import load_csv, split_XY, np_to_torch, get_objective_names
-from src.models import fit_gp_models, default_noise_options, loocv_select_models, posterior_report
-from src.data import y_minmax_np
+import pytest
+import torch
+from botorch.models.model_list_gp_regression import ModelListGP
+from gpytorch.kernels import Kernel
+from gpytorch.priors import Prior
 
-import gpytorch
-
-CFG_PATH = "configs/configCSV_example_config.yaml"
-CSV_PATH = "data/processed/configCSV_example.csv"
-
-def test_basic_gp_fitting():
-    """Test basic GP model fitting with real data."""
-    print("Testing GP model fitting...")
-    
-    # Load real data
-    config = yaml.load(open(CFG_PATH), Loader=yaml.FullLoader)
-    design = build_design_from_config(config)
-    df = load_csv(CSV_PATH)
-    X, Y = split_XY(df, design, config)
-    
-    print(f"Data loaded: X shape {X.shape}, Y shape {Y.shape}")
-    
-    # Convert to torch tensors (test with CUDA if available)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    X_t, Y_t = np_to_torch(X.values, Y.values, device=device)
-    print(f"Converted to torch: X {X_t.shape}, Y {Y_t.shape} on {X_t.device}")
-    
-    # Test noise options
-    print("\nTesting noise options...")
-    noise_opts = default_noise_options(device=device)
-    print(f"Available noise options: {list(noise_opts.keys())}")
-    
-    # Test that we can create likelihoods with these priors
-    for name, prior in noise_opts.items():
-        if prior is not None:
-            try:
-                likelihood = gpytorch.likelihoods.GaussianLikelihood(noise_prior=prior)
-                print(f"✓ {name}: Successfully created likelihood")
-            except Exception as e:
-                print(f"✗ {name}: Failed to create likelihood - {e}")
-        else:
-            print(f"✓ {name}: No prior (default likelihood)")
-    
-    # Fit GP models
-    print("\nFitting GP models...")
-    model = fit_gp_models(X_t, Y_t)
-    
-    # Verify model structure
-    assert hasattr(model, 'models'), "Should return ModelListGP"
-    assert len(model.models) == Y.shape[1], f"Should have {Y.shape[1]} models"
-    print(f"✓ Successfully fitted {len(model.models)} GP models")
-    
-    # Test prediction
-    with torch.no_grad():
-        posterior = model.posterior(X_t)
-        pred_mean = posterior.mean
-        pred_var = posterior.variance
-    
-    assert pred_mean.shape == Y_t.shape, "Prediction mean shape mismatch"
-    assert pred_var.shape == Y_t.shape, "Prediction variance shape mismatch"
-    print(f"✓ Predictions have correct shape: {pred_mean.shape}")
-    
-    return model, X_t, Y_t
+import mobo_kit.models as models_module
+from mobo_kit.models import (
+    default_kernel_options,
+    default_noise_options,
+    fit_gp_models,
+    posterior_report,
+)
 
 
-def test_loocv_model_selection():
-    """Test LOOCV model selection with real data."""
-    print("\nTesting LOOCV model selection...")
-    
-    # Load real data
-    config = yaml.load(open(CFG_PATH), Loader=yaml.FullLoader)
-    design = build_design_from_config(config)
-    df = load_csv(CSV_PATH)
-    X, Y = split_XY(df, design, config)
-    objective_names = get_objective_names(config)
-    
-    # Convert to torch tensors (test with CUDA if available)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    X_t, Y_t = np_to_torch(X.values, Y.values, device=device)
-    print(f"Running LOOCV on {len(X_t)} samples with {len(objective_names)} objectives")
-    
-    # Run LOOCV model selection (simplified for speed)
-    best_model, results_df = loocv_select_models(
-        X_t, Y_t, 
-        objective_names=objective_names,
-        device=device
+def _training_data():
+    train_x = torch.tensor(
+        [
+            [0.0, 0.0],
+            [0.2, 0.8],
+            [0.4, 0.3],
+            [0.6, 0.9],
+            [0.8, 0.2],
+            [1.0, 1.0],
+        ],
+        dtype=torch.float64,
     )
-    
-    # Verify results
-    assert hasattr(best_model, 'models'), "Should return ModelListGP"
-    assert len(best_model.models) == len(objective_names), "Should have model for each objective"
-    assert isinstance(results_df, pd.DataFrame), "Should return DataFrame"
-    
-    print(f"✓ LOOCV completed with {len(results_df)} combinations tested")
-    print(f"✓ Results columns: {list(results_df.columns)}")
-    print(f"✓ Best model has {len(best_model.models)} objectives")
-    
-    # Check results structure
-    expected_cols = {"Kernel", "NoisePrior", "Objective", "R2", "RMSE"}
-    assert expected_cols.issubset(set(results_df.columns)), "Missing expected columns"
-    
-    # Show sample results
-    print("\nSample LOOCV results:")
-    print(results_df.head(10))
-    
-    return best_model, results_df, X_t, Y_t, objective_names
-
-
-def test_posterior_report():
-    """Test posterior reporting with unnormalization."""
-    print("\nTesting posterior report...")
-    
-    # Load real data
-    config = yaml.load(open(CFG_PATH), Loader=yaml.FullLoader)
-    design = build_design_from_config(config)
-    df = load_csv(CSV_PATH)
-    X, Y = split_XY(df, design, config)
-    objective_names = get_objective_names(config)
-    
-    # Convert to torch tensors (test with CUDA if available)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    X_t, Y_t = np_to_torch(X.values, Y.values, device=device)
-    
-    # Normalize Y data (as would be done in real pipeline)
-    Y_scaled, Y_min, Y_max = y_minmax_np(Y.values)
-    Y_scaled_t = torch.tensor(Y_scaled, dtype=torch.float64, device=device)
-    
-    print(f"Y normalization - Min: {Y_min}, Max: {Y_max}")
-    
-    # Fit model on scaled data
-    model = fit_gp_models(X_t, Y_scaled_t)
-    
-    # Generate posterior report
-    report_df, metrics_df = posterior_report(
-        model, X_t, Y_scaled_t, Y_min, Y_max,
-        objective_names=objective_names,
-        add_residuals=True,
-        add_zscores=True
+    train_y = torch.stack(
+        (
+            train_x[:, 0] + 0.5 * train_x[:, 1],
+            1.0 - train_x[:, 0].square() + train_x[:, 1],
+        ),
+        dim=1,
     )
-    
-    # Verify report structure
-    assert isinstance(report_df, pd.DataFrame), "Should return DataFrame"
-    assert isinstance(metrics_df, pd.DataFrame), "Should return metrics DataFrame"
-    
-    print(f"✓ Report generated with {len(report_df)} rows")
-    print(f"✓ Report columns: {list(report_df.columns)}")
-    print(f"✓ Metrics columns: {list(metrics_df.columns)}")
-    
-    # Check for expected columns
-    for obj_name in objective_names:
-        assert f"True[{obj_name}]" in report_df.columns, f"Missing True column for {obj_name}"
-        assert f"Pred[{obj_name}]" in report_df.columns, f"Missing Pred column for {obj_name}"
-        assert f"Std[{obj_name}]" in report_df.columns, f"Missing Std column for {obj_name}"
-        assert f"Residual[{obj_name}]" in report_df.columns, f"Missing Residual column for {obj_name}"
-        assert f"Z[{obj_name}]" in report_df.columns, f"Missing Z-score column for {obj_name}"
-    
-    print("\nMetrics summary:")
-    print(metrics_df)
-    
-    print("\nSample report data:")
-    print(report_df.head())
-    
-    return report_df, metrics_df
+    return train_x, train_y
 
 
-def test_posterior_report_simple():
-    """Simple test for posterior report to debug issues."""
-    print("\nTesting posterior report (simple)...")
-    
-    # Load real data
-    config = yaml.load(open(CFG_PATH), Loader=yaml.FullLoader)
-    design = build_design_from_config(config)
-    df = load_csv(CSV_PATH)
-    X, Y = split_XY(df, design, config)
-    objective_names = get_objective_names(config)
-    
-    # Convert to torch tensors (test with CUDA if available)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    X_t, Y_t = np_to_torch(X.values, Y.values, device=device)
-    
-    # Normalize Y data (as would be done in real pipeline)
-    Y_scaled, Y_min, Y_max = y_minmax_np(Y.values)
-    Y_scaled_t = torch.tensor(Y_scaled, dtype=torch.float64, device=device)
-    
-    print(f"Y normalization - Min: {Y_min}, Max: {Y_max}")
-    print(f"Y_scaled_t shape: {Y_scaled_t.shape}, device: {Y_scaled_t.device}")
-    
-    # Fit model on scaled data
-    print("Fitting model...")
-    model = fit_gp_models(X_t, Y_scaled_t)
-    print(f"Model fitted with {len(model.models)} objectives")
-    
-    # Test posterior step by step
-    print("Testing posterior step by step...")
-    
-    # Step 1: Get posterior
-    print("Step 1: Getting posterior...")
-    post = model.posterior(X_t)
-    pred_mean_t = post.mean
-    pred_std_t = torch.sqrt(post.variance)
-    print(f"Posterior shapes - mean: {pred_mean_t.shape}, std: {pred_std_t.shape}")
-    
-    # Step 2: Convert to numpy
-    print("Step 2: Converting to numpy...")
-    from src.utils import torch_to_np
-    pred_mean, pred_std, true_scaled = torch_to_np(pred_mean_t, pred_std_t, Y_scaled_t)
-    print(f"Numpy shapes - mean: {pred_mean.shape}, std: {pred_std.shape}, true: {true_scaled.shape}")
-    
-    # Step 3: Unnormalize
-    print("Step 3: Unnormalizing...")
-    Y_min = np.asarray(Y_min, dtype=float)
-    Y_max = np.asarray(Y_max, dtype=float)
-    scale = (Y_max - Y_min).astype(float)
-    print(f"Scale factors: {scale}")
-    
-    pred_mean_unnorm = pred_mean * scale + Y_min
-    pred_std_unnorm = pred_std * scale
-    true_Y = true_scaled * scale + Y_min
-    print(f"Unnormalized shapes - mean: {pred_mean_unnorm.shape}, std: {pred_std_unnorm.shape}, true: {true_Y.shape}")
-    
-    print("✓ All steps completed successfully!")
-    return model, X_t, Y_scaled_t, Y_min, Y_max, objective_names
+def test_default_model_options_build_expected_active_types():
+    kernel_factories = default_kernel_options()
+    kernels = [factory(2) for factory in kernel_factories]
+    noise_options = default_noise_options(torch.device("cpu"))
+
+    assert len(kernels) == 4
+    assert all(isinstance(kernel, Kernel) for kernel in kernels)
+    assert all(kernel.ard_num_dims == 2 for kernel in kernels)
+    assert noise_options[0] is None
+    assert all(option is None or isinstance(option, Prior) for option in noise_options)
 
 
-def main():
-    """Run comprehensive model tests."""
-    print("Running comprehensive models.py tests...\n")
-    
-    try:
-        # Test 1: Basic GP fitting
-        print("="*60)
-        model, X_t, Y_t = test_basic_gp_fitting()
-        
-        # Test 2: LOOCV model selection
-        print("="*60)
-        best_model, results_df, X_t, Y_t, objective_names = test_loocv_model_selection()
-        
-        # Test 3: Posterior reporting (simple)
-        print("="*60)
-        model, X_t, Y_scaled_t, Y_min, Y_max, objective_names = test_posterior_report_simple()
-        
-        print("="*60)
-        print("\n🎉 All model tests passed successfully!")
-        print(f"🎯 Tested with {len(X_t)} samples across {X_t.shape[1]} input dimensions")
-        print(f"🎯 Validated {len(objective_names)} objectives: {objective_names}")
-        print(f"🎯 LOOCV tested {len(results_df)} kernel/noise combinations")
-        print(f"🎯 Generated comprehensive posterior report with metrics")
-        
-    except Exception as e:
-        print(f"\n❌ Test failed: {e}")
-        import traceback
-        traceback.print_exc()
+def test_fit_gp_models_and_posterior_report_have_multioutput_shapes(monkeypatch):
+    fit_calls = []
+
+    def skip_hyperparameter_optimization(mll):
+        fit_calls.append(mll)
+        return mll
+
+    monkeypatch.setattr(
+        models_module, "fit_gpytorch_mll", skip_hyperparameter_optimization
+    )
+    train_x, train_y = _training_data()
+
+    model = fit_gp_models(train_x, train_y)
+    pred_mean, pred_std = posterior_report(model, train_x[:3])
+
+    assert isinstance(model, ModelListGP)
+    assert len(model.models) == train_y.shape[1]
+    assert len(fit_calls) == train_y.shape[1]
+    assert pred_mean.shape == (3, 2)
+    assert pred_std.shape == (3, 2)
+    assert np.isfinite(pred_mean).all()
+    assert np.isfinite(pred_std).all()
+    assert (pred_std >= 0.0).all()
+    assert all(next(gp.parameters()).device.type == "cpu" for gp in model.models)
 
 
-if __name__ == "__main__":
-    main()
+def test_fit_gp_models_rejects_mismatched_per_objective_options(monkeypatch):
+    monkeypatch.setattr(models_module, "fit_gpytorch_mll", lambda mll: mll)
+    train_x, train_y = _training_data()
+
+    with pytest.raises(ValueError, match="kernel_fn list length"):
+        fit_gp_models(train_x, train_y, kernel_fn=[default_kernel_options()[0]])
+
+    with pytest.raises(ValueError, match="noise_priors list length"):
+        fit_gp_models(train_x, train_y, noise_priors=[None])

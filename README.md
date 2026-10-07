@@ -1,5 +1,8 @@
-# README: MOBO-Kit
-by Ethan Schwartz, Daniel Abdoue, Nicky Evans, and Tonio Buonassisi
+# MOBO-Kit
+
+initially designed by Ethan Schwartz, Daniel Abdoue, Nicky Evans, and Tonio Buonassisi<br>
+updated and reconstructed by Ziyang (Colin) Qi and Annie Xu
+
 <h1>
 <p align="center">
     <img src="assets/mobo-fom-logo.jpg" alt="Slot-die optimization logo" width="600"/>
@@ -8,280 +11,303 @@ by Ethan Schwartz, Daniel Abdoue, Nicky Evans, and Tonio Buonassisi
 
 <h4 align="center">
 
-[![DOI](https://img.shields.io/badge/DOI-TBD-blue)](https://doi.org/TBD)
-[![arXiv](https://img.shields.io/badge/arXiv-TBD-blue.svg?logo=arxiv&logoColor=white.svg)](https://arxiv.org/abs/TBD)
-[![Requires Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg?logo=python&logoColor=white)](https://python.org/downloads)
+[![Requires Python 3.11-3.12](https://img.shields.io/badge/Python-3.11--3.12-blue.svg?logo=python&logoColor=white)](https://python.org/downloads)
 
 </h4>
 
-**MOBO-Kit** is an open-source toolkit for accelerating design of experiments via **multi-objective Bayesian optimization**. Developed collaboratively across University of Washington, UC San Diego, and MIT, this toolkit enables rapid optimization of complex systems by balancing multiple objectives across any number of inputs and outputs (>2). While demonstrated for slot-die coating experiments (e.g., optimizing efficiency, repeatability, and stability), MOBO-Kit is generalizable to any multi-objective optimization problem.
+**MOBO-Kit** accelerates design of experiments with **multi-objective Bayesian
+optimization**. It proposes small batches of experimental conditions that trade
+off several objectives at once, for problems with more than two inputs and more
+than two outputs. Developed across the University of Washington, UC San Diego and
+MIT, and demonstrated on slot-die coated perovskite films.
 
-## Key Features
+## Three contracts, one live campaign
 
-MOBO-Kit provides a complete package for multi-objective Bayesian optimization with:
-- **Latin Hypercube Sampling** for initial experiment design
-- **Gaussian Process models** with BoTorch
-- **Multi-objective acquisition functions** (qNEHVI)
-- **Batch candidate proposal** for efficient parallel experimentation
-- **Comprehensive plotting and analysis tools**
-- **Constraint handling** for complex design spaces
-- **Command-line interface** and Python API
+| | v2 — test data | v3 — test data | v4 — **the real campaign** |
+|---|---|---|---|
+| config | `campaign_d2d_perovskite.yaml` (archived) | `campaign_d2d_perovskite_test.yaml` (archived) | `campaign_d2d_perovskite_final.yaml` |
+| contract | `d2d-objectives-v2-nm-thickness` | `d2d-objectives-v3-test` | `d2d-objectives-v4-final-nomean` |
+| workbook | `Summary Table.xlsx` | `Summary Table Test.xlsx` | `Final Summary Table.xlsx` |
+| sheet | `Sheet1` | `Sheet1` | `R0` |
+| purpose | early toolkit testing | rehearsing this contract's shape | **the experiment being run** |
 
----
+Uniformity and optoelectronic have been renormalised twice, so **none of v2's or
+v3's fitted numbers carry over** — they are about quantities that were redefined.
+Each earlier contract is kept as a record, with a banner on every document that
+describes it. The launcher and every script default to v4.
 
-## Table of Contents
+**In v4 the uniformity and optoelectronic scores are read as stored — the score
+value is the interface.** How a group scores uniformity or optoelectronic is that
+group's own method, and another group may score differently, so the toolkit takes
+the number from the workbook and never re-derives it (the group's decision,
+2026-09-06). Thickness is still computed from `T1..T4`, because that is what lets
+an operator-flagged reading (`T anom`) be excluded and reported; the model learns
+the measured thickness and the 650 nm target is applied afterwards.
 
-- [Key Features](#key-features)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Configuration](#configuration)
-- [Package Structure](#package-structure)
-- [Troubleshooting](#troubleshooting)
-- [Next Steps](#next-steps)
-- [Citation](#citation)
-- [License](#license)
-- [Get in Touch](#get-in-touch)
+**No objective carries a physics prior.** The thickness mean function was
+withdrawn on 2026-09-06, which is what the `-nomean` in the contract name records.
+See `docs/CAMPAIGN_STATUS.md` for what reading the scores as stored costs and which
+guards remain.
 
----
+## The campaign loop
+
+A campaign runs in three rounds. R0 makes one film per condition; every condition
+the optimiser proposes after that is made in triplicate, so reproducibility can be
+measured.
+
+| Round | Method | Conditions | Films |
+|---|---|---:|---:|
+| R0 | Latin hypercube sampling | 15 | 15 |
+| R1 | UCB-HVI + local penalization | 5 | 15 |
+| R2 | qLogNEHVI | 3 | 9 |
+
+```python
+from mobo_kit.campaign import load_campaign_config, run_r0_lhs, run_r1_ucb, run_r2_qlognehvi
+from mobo_kit.workbook_io import read_campaign_workbook
+
+config = load_campaign_config("configs/campaign_d2d_perovskite_final.yaml")
+
+r0 = run_r0_lhs(config, n=15)                        # space-filling, no model
+
+# uniformity and optoelectronic are read from the workbook as stored (frozen);
+# thickness is computed from the raw readings and cross-checked
+contents = read_campaign_workbook("local_inputs/Final Summary Table.xlsx", config)
+X_phys = contents.inputs.to_numpy(float)
+Y_model = contents.model_values.to_numpy(float)      # in objective order
+assert contents.errors == ()                         # fail closed before fitting
+
+r1 = run_r1_ucb(config, X_phys, Y_model, n=5)        # after R0 is measured
+r2 = run_r2_qlognehvi(config, X_phys, Y_model, n=3)  # after R1 is measured
+```
+
+Each call returns a `RoundResult` with `conditions` (distinct recipes, physical
+units), `replicates` (one row per film, grouped), and `diagnostics` (seed, pool
+size, fit warnings, and a validity report).
+
+**New to this repo?** Read `docs/HANDOFF.md` first — reading order, where the
+project stands, what is genuinely open, and the questions already settled.
+`docs/CAMPAIGN_STATUS.md` is the working guide: what to pass, what comes back, and
+the evidence behind each decision.
+
+## Running a round without writing code
+
+Double-click **`launch_mobo_kit.bat`** (Windows) or **`launch_mobo_kit.command`**
+(macOS — `chmod +x` it once first). A small window opens:
+
+1. **Browse** to the campaign workbook. It is remembered next time.
+2. **Check workbook** — reports which round is due, and anything the read
+   noticed: a stored score that no longer matches its measurements, a reading the
+   operator flagged, a film whose thickness readings disagree with each other.
+3. **Propose R1** (or R2) — fits the model, scores the candidate pool, and writes
+   the batch to a **new file beside the workbook**, never into it. That file gets
+   two sheets: the worklist to fill in, and a **`Review`** sheet giving each
+   proposed condition's predicted objectives with uncertainties, its predicted
+   thickness in nanometres, its distance from anything already measured, and which
+   settings sit at the edge of their range. The same text appears in the window, so
+   it can be forwarded to the group as-is.
+
+4. **Figures.** The same press renders six figures beside the workbook, under
+   `<name>_reports/<round>_<timestamp>/`: where the batch sits in recipe space,
+   how well the model predicts a film it has not seen, which inputs move each
+   objective, what the batch is expected to produce, hypervolume so far, and the
+   trade-off itself. Each one writes the CSV behind it. A second button,
+   **Figures from current data**, renders the four that need no batch — useful the
+   moment measurements are entered.
+
+Then run the films, fill in the highlighted columns of that new sheet, and press
+the button again. R2 reads the R1 measurements back and aggregates each condition's
+three films into one observation.
+
+The window approves nothing. It shows the proposed conditions in physical units
+with the batch's spacing diagnostics; a human decides whether to fabricate.
+Everything it does is available as plain functions in `mobo_kit.launcher`
+(`inspect_campaign`, `gather_observations`, `generate_next_round`) for anyone who
+would rather script it.
 
 ## Installation
 
-### Option 1: Install from Source (Recommended)
+```bash
+conda create -n mobo-kit python=3.12
+conda activate mobo-kit
+git clone https://github.com/PV-Lab/MOBO-Kit.git
+cd MOBO-Kit
+python -m pip install -r requirements/dev.txt
+```
 
-We recommend creating a clean Python environment using `conda` or `venv`:
+Tested on CPU with Python 3.12, PyTorch 2.8.0, BoTorch 0.15.1, GPyTorch 1.14.
+The exact stack is pinned in `requirements/constraints.txt`.
+
+## Does the optimizer actually work?
+
+`tests/test_dtlz2_acceptance.py` runs the whole loop on **DTLZ2** — a synthetic
+3-objective, 10-input problem with a known Pareto front — so the algorithm can be
+checked independently of any experimental data.
 
 ```bash
-# Create and activate environment
-conda create -n mobo-fom python=3.10
-conda activate mobo-fom
-
-# Or using venv
-python -m venv mobo-env
-source mobo-env/bin/activate  # On Windows: mobo-env\Scripts\activate
-
-# Install MOBO-Kit
-git clone https://github.com/PV-Lab/MOBO-FOM.git
-cd MOBO-FOM
-pip install -e .
+pytest tests/test_dtlz2_acceptance.py -m "not slow"
+pytest tests/test_dtlz2_acceptance.py -m slow
 ```
 
-This will automatically install all required dependencies including:
-- Core scientific computing: numpy, pandas, scipy, matplotlib, seaborn, scikit-learn
-- Machine learning: torch, gpytorch, botorch, emukit
-- Additional tools: shap, pyDOE, pyyaml
+Cumulative hypervolume rises monotonically **by construction**, so that alone
+proves nothing — random sampling passes it too. The informative comparison is
+against a random baseline at equal budget: mean hypervolume gain **+0.075 (BO)
+against +0.056 (random)**, winning on 5 of 8 seeds. BO wins on the mean, not on
+every seed, which is the honest expectation for 8 added points in 10 dimensions.
 
-### GPU Support (CUDA [Windows])
+`python scripts/plot_dtlz2_report.py` renders the round-by-round GP fit,
+uncertainty, acquisition surface and selected batch.
 
-MOBO-Kit uses PyTorch for machine learning models. By default, the installation includes the CPU-only version of PyTorch. For GPU acceleration, you'll need to install the CUDA version of PyTorch.
+## How beta and radius were chosen
 
-**Check your CUDA version:**
-```bash
-nvidia-smi
-```
+The live campaign runs **beta = 4.0** and **radius = 0.25**. They were determined
+by a sweep over two instruments on the campaign's own data: per-round utility
+**box plots** across a grid of **beta from 9 to 49** and **radius from 0.05 to
+0.45**, and **heat maps** -- 2-D slices through the higher-dimensional
+Gaussian-process model -- at the same cells. `scripts/plot_boxplot_sweep.py` and
+`scripts/plot_round_simulation.py` produce them; the outputs stay local, because
+they are how the group picks a setting rather than a result about the chemistry.
 
-**Install PyTorch with CUDA support:**
-```bash
-# For CUDA 12.1 (recommended for most systems)
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+Two things to know before quoting that choice.
 
-# For CUDA 11.8 (more compatible with older systems)
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+**The sweep could not rank the cells.** The whole spread across betas was 0.0065
+against a trial-to-trial standard deviation of 0.010--0.027, and the best cell was
+a different (beta, radius) in every trial. So this is a declared policy about how
+much to explore, not a measured optimum.
 
-# For CUDA 12.4
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+**The campaign ran at beta = 36 from 2026-08 to 2026-09-03**, on the argument that
+two of three objectives carried no learnable signal and heavy exploration was
+therefore the right posture. That was retired when 45 rows of repeated recipes
+showed *why* those two axes are unlearnable -- one is dominated by
+between-campaign measurement drift, the other is reproducible but too sparsely
+sampled -- neither of which more exploration reaches. At beta = 36 the radius knob
+was also provably inert: radii 0.15, 0.25 and 0.35 returned bit-identical batches,
+and 18 of 50 proposed coordinates sat on a grid bound. At beta = 4 / radius 0.25
+that falls to 11. See `docs/CAMPAIGN_STATUS.md` for the table and its caveats.
 
-# For CUDA 12.8 (latest)
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
-```
+`docs/CAMPAIGN_STATUS.md` carries the full record, including the two triggers for
+revisiting the choice.
 
-**Verify GPU support:**
-```python
-import torch
-print("CUDA available:", torch.cuda.is_available())
-print("Device count:", torch.cuda.device_count())
-```
-
-### Option 2: Install with pip (once software license received)
-
-```bash
-pip install mobo-kit
-```
-
-### Option 3: Google Colab
-
-**Option 3a: Direct Notebook Link**
-- [Open MOBO-Kit notebook in Google Colab](https://colab.research.google.com/drive/1VzlCSTDw42kWxlI2xNUAOfmCZpLeKpN0?usp=sharing)
-
-**Option 3b: Install in your own Colab notebook**
-```python
-# Install in Google Colab
-!pip install git+https://github.com/PV-Lab/MOBO-FOM.git
-
-# Import and use
-import mobo_kit
-```
-
-### Dependencies
-
-MOBO-Kit requires:
-- Python 3.10+
-- PyTorch 1.12+
-- BoTorch 0.8+
-- GPyTorch 1.8+
-- NumPy, Pandas, Scikit-learn
-- Matplotlib, Seaborn
-
-See `requirements.txt` for the complete list of dependencies.
-
-## Quick Start
-
-### 1. Command Line Interface
-
-```bash
-# Run with default configuration
-mobo-kit --csv data/processed/configCSV_example.csv
-
-# Run with custom output directory
-mobo-kit --csv data/my_data.csv --out results/my_experiment
-
-# Run with verbose output
-mobo-kit --csv data/my_data.csv --verbose
-```
-
-### 2. Python API
-
-```python
-import mobo_kit
-from mobo_kit.main import main
-
-# Run the main workflow
-main()
-```
-
-### 3. Advanced Usage Examples
-
-```python
-# Generate initial experiments
-from mobo_kit.main import generate_initial_experiments
-
-results = generate_initial_experiments(
-    config_path="configs/demo_config.yaml",
-    n_samples=20,
-    save_path="initial_experiments.csv"
-)
-
-# Run MOBO optimization with custom parameters
-from mobo_kit.main import run_mobo_experiment
-
-results = run_mobo_experiment(
-    csv_path="data/processed/configCSV_example.csv",
-    save_dir="results/experiment",
-    verbose=True
-)
-```
-
-### 4. Jupyter Notebooks
-
-See the `notebooks/` directory for interactive examples:
-- `MOBO_demo_annotated.ipynb` - Complete workflow demonstration
-  - *Note*: The LOOCV function may have trouble converging on small noisy datasets and is still in development.
-
-## Configuration
-
-MOBO-Kit uses YAML configuration files. See `configs/` directory for examples:
-
-- `demo_config.yaml` - Basic configuration
-- `configCSV_example_config.yaml` - Configuration from CSV metadata
-
-### Configuration Structure
-
-```yaml
-inputs:
-  - name: "parameter1"
-    unit: "unit"
-    start: 0.0
-    stop: 1.0
-    step: 0.01
-
-objectives:
-  names:
-  - objective 1
-  - objective 2
-  - objective 3
-
-constraints:
-  - clausius_clapeyron: true
-    ah_col: "absolute_humidity"
-    temp_c_col: "temperature_c"
-
-## Package Structure
+## Repository layout
 
 ```
 src/mobo_kit/
-├── main.py          # Main API functions
-├── cli.py           # Command-line interface
-├── design.py        # Design space construction
-├── data.py          # Data loading and preprocessing
-├── models.py        # Gaussian Process models
-├── acquisition.py   # Acquisition functions and batch proposal
-├── lhs.py           # Latin Hypercube Sampling
-├── plotting.py      # Visualization tools
-├── metrics.py       # Performance metrics
-├── constraints.py   # Constraint handling
-└── utils.py         # Utility functions
+  campaign.py             the three rounds; start here
+  design.py               input grid and bounds
+  lhs.py                  Latin hypercube sampling (R0)
+  candidate_pool.py       discrete candidate sampling
+  sobol_pool.py           nested Sobol pools (alternative sampler)
+  models.py               GP construction
+  model_validation.py     strict fitting, exact LOOCV, fit guards
+  structured_mean.py      physics-informed GP mean functions
+  scores.py               measurement columns -> objective values, cross-checked
+  objectives.py           objective value -> utility contract
+  replicate_variance.py   replicate films -> observation variance (train_Yvar)
+  batch_review.py         what a proposed batch says, before anyone fabricates it
+  round_report.py         the six figures a round produces, and their data
+  loocv.py                the one leave-one-out fold loop, shared by all callers
+  attribution.py          exact Shapley values over the campaign's own models
+  launcher.py             the one-button loop, and the tkinter window over it
+  ucb_hvi.py              UCB hypervolume-improvement scoring (R1)
+  qlognehvi_batch.py      qLogNEHVI batch selection (R2)
+  batch_selection.py      local penalization, shared by both
+  discrete_refinement.py  exact-grid local search
+  workbook_io.py          Excel read / candidate-sheet write / read results back
+  metrics.py              Pareto front and hypervolume
+  plotting.py             diagnostic plots
+  candidate_diagnostics.py, acquisition.py, cli.py, main.py,
+  data.py, constraints.py, utils.py
+
+  research_qnehvi.py      qNEHVI as a research-only R2 variant, NOT the campaign
+
+configs/   campaign_d2d_perovskite_final.yaml (the live campaign),
+           campaign_d2d_perovskite_test.yaml and campaign_d2d_perovskite.yaml
+           (archived), two diagnostics, two examples
+docs/      HANDOFF.md, CAMPAIGN_STATUS.md, GP_MODEL_DECISION.md,
+           R1_BATCH_WITHDRAWAL.md, ROUND_SIM_DELTA.md, ROUND_SIM_MANIFEST.md,
+           SHAP_SUMMARY.md
+scripts/   diagnostics, report figures, intake_new_data.py,
+           dtlz2_parameter_sweep.py, plot_round_simulation.py,
+           plot_shap_attribution.py, permutation_rank_test.py,
+           generate_round_report.py
+tests/     pytest suite; docs/HANDOFF.md keeps the expected count
+launch_mobo_kit.bat, launch_mobo_kit.command   double-click entry points
 ```
 
-## Troubleshooting
+## Configuration
 
-### Common Installation Issues
+Objectives declare **what the model trains on** separately from **how that
+becomes a utility**, because the two are not always the same column:
 
-1. **Import errors**: Ensure all dependencies are installed:
-   ```bash
-   pip install -r requirements.txt
-   ```
+```yaml
+objectives:
+  contract_version: d2d-objectives-v4-final-nomean
+  scaling_mode: fixed_affine
+  specs:
+    - name: thickness
+      model_source_column: "Thickness (avg)"   # stored cell: cross-check only
+      transform: gaussian_target               # utility peaks at the target
+      goal: target
+      target: 650.0
+      sigma: 176.7766952966369                 # the sheet's 250, as 250/sqrt(2)
+      measurement:                             # what the GP actually trains on
+        recipe: mean_of_present                # mean of whichever were measured
+        inputs: [{column: T1}, {column: T2}, {column: T3}, {column: T4}]
+        excluded: [{column: "T anom"}]         # operator-flagged, never averaged
+        cross_check: [{column: "Thickness (avg)", atol: 1.0e-9}]
+      replicate_aggregate: mean                # must match the model's space: nm
+```
 
-2. **CUDA/GPU support**: Install PyTorch with CUDA (example, please use matching nvidia-smi):
-   ```bash
-   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-   ```
+The `measurement` block says what the model trains on. For thickness that is the
+mean of the T readings, recomputed from the raw columns so that an
+operator-flagged reading can be excluded and reported, with the stored cell
+demoted to a cross-check. Uniformity and optoelectronic use `recipe: stored` in v4:
+the score cell is the value, because the score is the group's own definition.
 
-3. **Python version compatibility**: Use Python 3.10 or 3.11:
-   ```bash
-   conda create -n mobo-kit python=3.10
-   conda activate mobo-kit
-   pip install -e .
-   ```
+Objective scales are **fixed for the whole campaign** and must never be
+re-derived from observed data — otherwise utility space moves between rounds and
+hypervolume stops being comparable across them.
+`assert_scaling_is_campaign_fixed` enforces this and runs inside
+`build_objective_transform`, so no transform can bypass it.
 
-4. **Jupyter notebook support**:
-   ```bash
-   pip install jupyter ipykernel
-   python -m ipykernel install --user --name=mobo-kit --display-name "Python (mobo-kit)"
-   ```
+## Current parameters
 
-### Runtime Issues
+| Setting | Value | Config key |
+|---|---|---|
+| UCB beta (R1) | 4.0 | `rounds.r1.beta` |
+| Local penalization radius | 0.25 | `local_penalization.radius` |
+| Minimum batch spacing | 0.15 | `local_penalization.min_batch_distance` |
+| Candidate pool | 32768 | `rounds.*.candidate_pool_size` |
+| Posterior samples (R1) | 256 | `rounds.r1.posterior_samples` |
+| MC samples (R2) | 128 | `rounds.r2.mc_samples` |
+| GP variant | `dim_scaled_prior` | `model.variant` |
+| Observation noise | `replicate_pooled` — measured from the R1 triplicates | `model.observation_noise` |
+| Seed | 73 | `reproducibility.seed` |
 
-- **Memory issues**: For large datasets, consider using CPU instead of GPU or reducing batch sizes
-- **Convergence issues**: The LOOCV function may have trouble converging on small noisy datasets
-- **CUDA out of memory**: Reduce batch size or use CPU mode
+All of these are campaign configuration, not code. Tuning them does not require
+touching the algorithm.
 
-## Next Steps
+The ten input grids hold 11/10/11/13/21/17/18/11/21/17 values, so the full
+Cartesian product is 396,945,008,460 recipes. It must never be materialised —
+that is what the sampled candidate pool and the discrete local search are for.
 
-1. **Try the demo**: `mobo-kit --csv data/processed/configCSV_example.csv --verbose`
-2. **Generate initial experiments**: `mobo-kit generate --config configs/demo_config.yaml --n-samples 20 --out my_experiments.csv`
-3. **Explore Jupyter notebooks** in the `notebooks/` directory
-4. **Check configuration examples** in the `configs/` directory
+**Constraints are config too, and the live campaign declares three.** They are
+enforced by filtering the candidate pool before any acquisition scores it, and
+re-checked independently when the batch is validated:
 
-## Citation
-
-*Citation information will be added upon publication.*
+```yaml
+constraints:
+  # a second spin stage either happens or it does not
+  - zero_coupled: [speed_2, time_2]
+  # the antisolvent has to land while the substrate is still spinning
+  - sum_upper_strict: {lhs: anti_time, rhs: [time_1, time_2]}
+  # and if it happens, it runs for at least 10 s
+  - nonzero_minimum: {column: time_2, minimum: 10}
+```
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT — see [LICENSE](LICENSE).
 
-## Get in Touch
+## Get in touch
 
-For questions, issues, or contributions, please:
-- Open an issue on GitHub
-- Contact the development team
-- Check the documentation in the `notebooks/` directory
+Open an issue on GitHub, or contact the development team.

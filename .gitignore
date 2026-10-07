@@ -14,6 +14,15 @@ ENV/
 env/
 mobo-env/
 
+# Private campaign inputs (never commit experimental workbooks/data)
+local_inputs/
+local_outputs/
+# The launcher writes round reports BESIDE the workbook, so they normally
+# land under local_inputs/ -- but only if the workbook is kept there. This
+# catches them wherever a user actually puts it.
+*_reports/
+*_PRIVATE_EVIDENCE_DO_NOT_SHARE.zip
+
 # Distribution / packaging
 .Python
 build/
@@ -55,4 +64,5 @@ Desktop.ini
 .tox/
 .nox/
 .pytest_cache/
+.mypy_cache/
 htmlcov/
